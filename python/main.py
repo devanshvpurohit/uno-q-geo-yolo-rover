@@ -314,26 +314,21 @@ def ask_ai():
     gps_info = f"Latitude {t['lat']:.5f}, Longitude {t['lng']:.5f}, {t['sats']} Satellites locked, Altitude {t['altitude']:.1f}m" if t['lat'] != 0 else "GPS acquiring satellite fix"
     pitch, roll = t.get('pitch', 0.0), t.get('roll', 0.0)
 
-    system_instruction = (
-        "You are SURDAS, an intelligent real-time assistive guide for a blind or visually impaired person.\n"
-        f"LIVE SENSORS:\n"
-        f"- Vision detections: {detected}\n"
-        f"- Proximity clearance: Left corridor {left_clr}% clear, Center {center_clr}% clear, Right corridor {right_clr}% clear\n"
-        f"- Orientation: Pitch {pitch}°, Roll {roll}°, Status: {fall}\n"
-        f"- Location: {gps_info}\n\n"
-        "INSTRUCTIONS:\n"
-        "Give a concise, direct, spoken response (1 to 2 sentences maximum) that tells the visually impaired user exactly what they need to know safely and clearly. Do NOT use bullet points, markdown or emojis."
+    concise_prompt = (
+        f"You are SURDAS voice assistant for a visually impaired user. "
+        f"Surroundings: {detected} detected. Walking path is {center_clr}% clear. GPS: {gps_info}. "
+        f"User asks: {user_prompt}. Answer in 1 concise spoken sentence without markdown or symbols:"
     )
 
     ollama_payload = json.dumps({
         "model": "qwen2.5:0.5b",
-        "prompt": f"{system_instruction}\n\nUser Question: {user_prompt}\nSURDAS Voice Answer:",
+        "prompt": concise_prompt,
         "stream": False,
         "keep_alive": -1,
         "options": {
-            "num_predict": 35,
+            "num_predict": 25,
             "temperature": 0.2,
-            "num_thread": 2
+            "num_thread": 3
         }
     }).encode('utf-8')
 
@@ -343,13 +338,13 @@ def ask_ai():
             data=ollama_payload,
             headers={"Content-Type": "application/json"}
         )
-        with urllib.request.urlopen(req, timeout=25) as response:
+        with urllib.request.urlopen(req, timeout=20) as response:
             res_json = json.loads(response.read().decode('utf-8'))
             reply = res_json.get('response', '').strip()
             return jsonify({"success": True, "answer": reply})
     except Exception as e:
         # Fallback instantaneous rule-based response if Ollama is still initializing
-        fallback = f"SURDAS status: {detected} detected in front of you. Center corridor is {center_clr}% clear."
+        fallback = f"SURDAS status: {detected} in front. Center walking path is {center_clr}% clear."
         return jsonify({"success": True, "answer": fallback, "note": str(e)})
 
 @app.route('/api/download_log')
