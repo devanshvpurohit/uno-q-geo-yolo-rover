@@ -329,9 +329,10 @@ def ask_ai():
         "model": "qwen2.5:0.5b",
         "prompt": f"{system_instruction}\n\nUser Question: {user_prompt}\nSURDAS Voice Answer:",
         "stream": False,
+        "keep_alive": -1,
         "options": {
-            "num_predict": 50,
-            "temperature": 0.3,
+            "num_predict": 35,
+            "temperature": 0.2,
             "num_thread": 2
         }
     }).encode('utf-8')
@@ -342,7 +343,7 @@ def ask_ai():
             data=ollama_payload,
             headers={"Content-Type": "application/json"}
         )
-        with urllib.request.urlopen(req, timeout=12) as response:
+        with urllib.request.urlopen(req, timeout=25) as response:
             res_json = json.loads(response.read().decode('utf-8'))
             reply = res_json.get('response', '').strip()
             return jsonify({"success": True, "answer": reply})
