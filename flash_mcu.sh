@@ -1,35 +1,41 @@
 #!/usr/bin/env bash
-# Flash the STM32 MCU directly on the Arduino UNO Q without any IDE or App Lab
+# Flash the STM32 MCU directly on the Arduino UNO Q using arduino:zephyr:unoq
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKETCH_PATH="$SCRIPT_DIR/sketch"
 
-echo "=== Flashing STM32 MCU on Arduino UNO Q ==="
+echo "=== Flashing STM32 MCU on Arduino UNO Q (arduino:zephyr:unoq) ==="
 
-# Check if arduino-cli is installed
+# 1. Ensure arduino-cli is installed
 if ! command -v arduino-cli &> /dev/null; then
     echo "Installing arduino-cli..."
     curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=/usr/local/bin sudo sh
 fi
 
-# Update core index
+# 2. Update core index
 arduino-cli core update-index
 
-# Install arduino:zephyr core if not installed
+# 3. Ensure arduino:zephyr core is installed
 echo "Verifying arduino:zephyr core..."
 if ! arduino-cli core list | grep -q "arduino:zephyr"; then
     echo "Installing arduino:zephyr core..."
     arduino-cli core install arduino:zephyr
 fi
 
-# Compile using the official FQBN for UNO Q: arduino:zephyr:unoq
+# 4. Install required Arduino libraries for sensors
+echo "Installing sensor libraries..."
+arduino-cli lib install "Adafruit MPU6050" || true
+arduino-cli lib install "Adafruit Unified Sensor" || true
+arduino-cli lib install "TinyGPSPlus" || true
+
+# 5. Compile using official FQBN: arduino:zephyr:unoq
 echo "Compiling sketch for Arduino UNO Q (arduino:zephyr:unoq)..."
 arduino-cli compile -b arduino:zephyr:unoq "$SKETCH_PATH"
 
-# Upload to STM32 core via internal remoteocd bus
-echo "Uploading to STM32 core..."
+# 6. Upload to STM32 core
+echo "Uploading to STM32 MCU..."
 arduino-cli upload -b arduino:zephyr:unoq "$SKETCH_PATH"
 
-echo "=== MCU Flashed Successfully! ==="
+echo "=== MCU Flashed Successfully with arduino:zephyr:unoq! ==="
