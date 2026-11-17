@@ -3,160 +3,233 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>UNO Q Geo-YOLO Vision Rover</title>
+    <title>SURDAS - Assistive Vision & Navigation for the Blind</title>
     <style>
         :root {
-            --bg-color: #0b0f19;
-            --card-bg: #151d30;
-            --accent-cyan: #00f0ff;
-            --accent-green: #00ff66;
-            --accent-red: #ff3366;
-            --text-main: #f0f4f8;
-            --text-dim: #8b9bb4;
+            --bg-color: #080c14;
+            --card-bg: #111927;
+            --accent-cyan: #00e5ff;
+            --accent-yellow: #ffd600;
+            --accent-green: #00e676;
+            --accent-red: #ff1744;
+            --text-main: #ffffff;
+            --text-dim: #90a4ae;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         body { background: var(--bg-color); color: var(--text-main); padding: 12px; }
-        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #222f4c; }
-        h1 { font-size: 1.1rem; color: var(--accent-cyan); letter-spacing: 0.5px; }
-        .badge { font-size: 0.75rem; background: #1f2b45; padding: 4px 8px; border-radius: 12px; border: 1px solid var(--accent-cyan); }
-        .container { display: grid; grid-template-columns: 1fr; gap: 12px; max-width: 900px; margin: 0 auto; }
+        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid #1c2a40; }
+        h1 { font-size: 1.2rem; color: var(--accent-cyan); letter-spacing: 0.5px; }
+        .badge { font-size: 0.8rem; font-weight: bold; padding: 4px 10px; border-radius: 12px; }
+        .badge-active { background: #003314; color: var(--accent-green); border: 1px solid var(--accent-green); }
+        .badge-warn { background: #332b00; color: var(--accent-yellow); border: 1px solid var(--accent-yellow); }
+        .badge-alert { background: #33000a; color: var(--accent-red); border: 1px solid var(--accent-red); animation: pulse 1s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+
+        .container { display: grid; grid-template-columns: 1fr; gap: 12px; max-width: 960px; margin: 0 auto; }
         @media(min-width: 768px) { .container { grid-template-columns: 3fr 2fr; } }
-        
-        .card { background: var(--card-bg); border-radius: 10px; padding: 12px; border: 1px solid #1e2b45; }
+
+        .card { background: var(--card-bg); border-radius: 10px; padding: 14px; border: 1px solid #1e2b45; }
         .video-box { position: relative; border-radius: 8px; overflow: hidden; background: #000; min-height: 240px; display: flex; justify-content: center; align-items: center; }
         .video-box img { width: 100%; height: auto; display: block; border-radius: 8px; }
-        
+
+        .guidance-box { margin-top: 10px; padding: 12px; background: #0b1320; border-radius: 8px; border-left: 4px solid var(--accent-cyan); }
+        .guidance-title { font-size: 0.75rem; text-transform: uppercase; color: var(--text-dim); }
+        .guidance-text { font-size: 1.2rem; font-weight: bold; color: var(--accent-cyan); margin-top: 4px; }
+
         .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
-        .stat-card { background: #0d1322; border-radius: 6px; padding: 8px; border-left: 3px solid var(--accent-cyan); }
+        .stat-card { background: #0a0f1a; border-radius: 6px; padding: 10px; border: 1px solid #1c2738; }
         .stat-label { font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase; }
-        .stat-val { font-size: 1rem; font-weight: bold; margin-top: 2px; color: #fff; }
-        
-        .controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; max-width: 260px; margin: 12px auto; }
-        .btn { background: #1c2742; color: #fff; border: 1px solid #2d3e66; border-radius: 8px; padding: 14px; font-size: 1.1rem; cursor: pointer; user-select: none; transition: 0.1s; -webkit-tap-highlight-color: transparent; }
-        .btn:active { background: var(--accent-cyan); color: #000; transform: scale(0.96); }
-        .btn-stop { background: var(--accent-red); border-color: var(--accent-red); font-weight: bold; }
-        
-        .mode-bar { display: flex; gap: 8px; margin-top: 10px; }
-        .btn-mode { flex: 1; padding: 10px; font-size: 0.85rem; font-weight: bold; border-radius: 6px; border: 1px solid #2d3e66; background: #141f36; color: #fff; cursor: pointer; }
-        .btn-mode.active { background: var(--accent-green); color: #000; border-color: var(--accent-green); }
-        
-        .log-box { font-family: monospace; font-size: 0.75rem; background: #090d16; border-radius: 6px; padding: 8px; height: 110px; overflow-y: auto; color: #7cfc00; margin-top: 8px; }
-        .actions-bar { margin-top: 10px; display: flex; justify-content: space-between; }
-        .btn-sm { font-size: 0.75rem; padding: 6px 12px; background: #1f2b45; color: var(--accent-cyan); border: 1px solid var(--accent-cyan); border-radius: 4px; text-decoration: none; cursor: pointer; }
+        .stat-val { font-size: 1.05rem; font-weight: bold; margin-top: 3px; color: #fff; }
+
+        /* Haptic Status Bar */
+        .haptics-bar { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin: 12px 0; }
+        .haptic-sector { text-align: center; padding: 10px; border-radius: 6px; background: #131c2b; font-weight: bold; font-size: 0.85rem; border: 1px solid #23334d; }
+        .haptic-active { background: var(--accent-red); color: #fff; border-color: var(--accent-red); }
+
+        .btn-voice { width: 100%; padding: 12px; background: var(--accent-cyan); color: #000; font-size: 1rem; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; margin-top: 10px; }
+        .btn-voice.speaking { background: var(--accent-green); }
+
+        .log-box { font-family: monospace; font-size: 0.75rem; background: #05080e; border-radius: 6px; padding: 8px; height: 90px; overflow-y: auto; color: #7cfc00; margin-top: 8px; }
     </style>
 </head>
 <body>
     <header>
-        <h1>⚡ UNO Q Geo-YOLO Rover</h1>
-        <span class="badge" id="connStatus">LIVE CONNECTED</span>
+        <h1>👁️ SURDAS Assistive Vision</h1>
+        <span class="badge badge-active" id="sysStatus">SYSTEM ACTIVE</span>
     </header>
 
     <div class="container">
-        <!-- Vision Feed -->
+        <!-- Live Video & Voice Navigation -->
         <div class="card">
             <div class="video-box">
-                <img src="/video_feed" alt="Camera Stream" onerror="this.src=''; this.alt='Camera feed offline or loading...';">
+                <img src="/video_feed" alt="Camera Feed" onerror="this.alt='Connecting to Camera...';">
             </div>
-            <div class="grid-2">
-                <div class="stat-card">
-                    <div class="stat-label">Detected Target</div>
-                    <div class="stat-val" id="detTarget">None</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Active Action</div>
-                    <div class="stat-val" id="detAction" style="color: var(--accent-cyan);">STOP (S)</div>
+
+            <div class="guidance-box">
+                <div class="guidance-title">Audio Guidance Prompt</div>
+                <div class="guidance-text" id="guidanceText">Scanning environment...</div>
+            </div>
+
+            <!-- Haptic Vibration Feedback Display -->
+            <div style="margin-top: 10px;">
+                <div style="font-size: 0.75rem; color: var(--text-dim); margin-bottom: 4px;">HAPTIC VIBRATION FEEDBACK (MCU)</div>
+                <div class="haptics-bar">
+                    <div class="haptic-sector" id="hapLeft">LEFT [D5]</div>
+                    <div class="haptic-sector" id="hapCenter">AHEAD [D6]</div>
+                    <div class="haptic-sector" id="hapRight">RIGHT [D7]</div>
                 </div>
             </div>
+
+            <button class="btn-voice" id="btnVoiceToggle" onclick="toggleSpeech()">🔊 ENABLE VOICE ASSISTANT</button>
         </div>
 
-        <!-- Telemetry & Controls -->
+        <!-- Sensor Diagnostics & Geo-Location -->
         <div class="card">
-            <h3 style="font-size: 0.9rem; color: var(--accent-cyan); margin-bottom: 8px;">TELEMETRY HUD</h3>
+            <h3 style="font-size: 0.9rem; color: var(--accent-cyan); margin-bottom: 8px;">ASSISTIVE SENSORS & SAFETY</h3>
+            
             <div class="grid-2">
                 <div class="stat-card">
-                    <div class="stat-label">GPS Latitude</div>
-                    <div class="stat-val" id="gpsLat">0.000000</div>
+                    <div class="stat-label">Fall Detection (IMU)</div>
+                    <div class="stat-val" id="fallBadge" style="color: var(--accent-green);">NORMAL</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">GPS Longitude</div>
-                    <div class="stat-val" id="gpsLng">0.000000</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Ground Speed</div>
-                    <div class="stat-val"><span id="gpsSpeed">0.0</span> km/h</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">IMU Pitch / Roll</div>
-                    <div class="stat-val"><span id="imuAx">0.0</span> / <span id="imuAy">0.0</span> g</div>
+                    <div class="stat-label">Emergency SOS (D2)</div>
+                    <div class="stat-val" id="sosBadge" style="color: var(--text-dim);">STANDBY</div>
                 </div>
             </div>
 
-            <div class="mode-bar">
-                <button class="btn-mode active" id="btnAuto" onclick="setMode('auto')">AUTO (YOLO)</button>
-                <button class="btn-mode" id="btnManual" onclick="setMode('manual')">MANUAL DRIVE</button>
+            <div class="grid-2">
+                <div class="stat-card">
+                    <div class="stat-label">IMU Status</div>
+                    <div class="stat-val" id="imuStatus">Initializing...</div>
+                    <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 2px;">
+                        Acc: <span id="imuAcc">0.0, 0.0, 0.0</span> m/s²
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">GPS Satellites</div>
+                    <div class="stat-val" id="gpsSats">0 Tracked</div>
+                    <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 2px;" id="gpsFixStatus">
+                        Searching signal...
+                    </div>
+                </div>
             </div>
 
-            <div class="controls" id="manualPad" style="opacity: 0.4; pointer-events: none;">
-                <div></div>
-                <button class="btn" onclick="sendCmd('F')">▲</button>
-                <div></div>
-                <button class="btn" onclick="sendCmd('L')">◀</button>
-                <button class="btn btn-stop" onclick="sendCmd('S')">■</button>
-                <button class="btn" onclick="sendCmd('R')">▶</button>
-                <div></div>
-                <button class="btn" onclick="sendCmd('B')">▼</button>
-                <div></div>
+            <div class="stat-card" style="margin-top: 8px;">
+                <div class="stat-label">Current Geo-Location</div>
+                <div class="stat-val" id="gpsCoords">0.000000, 0.000000</div>
+                <div style="font-size: 0.75rem; margin-top: 4px;">
+                    <a id="mapsLink" href="#" target="_blank" style="color: var(--accent-cyan); text-decoration: none;">📍 Open Location in Google Maps</a>
+                </div>
             </div>
 
-            <div class="actions-bar">
-                <span style="font-size: 0.75rem; color: var(--text-dim);">Live Mission Log</span>
-                <a href="/api/download_log" class="btn-sm" download>Export CSV Log</a>
+            <div style="margin-top: 10px; display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Obstacle Event History</span>
+                <a href="/api/download_log" style="font-size: 0.75rem; color: var(--accent-cyan); text-decoration: none;">Export CSV Log</a>
             </div>
-            <div class="log-box" id="eventLog">Waiting for telemetry...</div>
+            <div class="log-box" id="eventLog">Listening for sensors...</div>
         </div>
     </div>
 
     <script>
-        let currentMode = 'auto';
+        let voiceEnabled = false;
+        let lastSpokenText = "";
+        let lastSpeechTime = 0;
 
-        function setMode(mode) {
-            currentMode = mode;
-            fetch('/api/mode/' + mode, { method: 'POST' });
-            document.getElementById('btnAuto').classList.toggle('active', mode === 'auto');
-            document.getElementById('btnManual').classList.toggle('active', mode === 'manual');
-            const pad = document.getElementById('manualPad');
-            pad.style.opacity = mode === 'manual' ? '1.0' : '0.4';
-            pad.style.pointerEvents = mode === 'manual' ? 'auto' : 'none';
+        function toggleSpeech() {
+            voiceEnabled = !voiceEnabled;
+            const btn = document.getElementById('btnVoiceToggle');
+            if (voiceEnabled) {
+                btn.innerText = "🔊 VOICE ASSISTANT: ON";
+                btn.classList.add('speaking');
+                speak("Surdas Assistive Vision Active");
+            } else {
+                btn.innerText = "🔇 ENABLE VOICE ASSISTANT";
+                btn.classList.remove('speaking');
+            }
         }
 
-        function sendCmd(cmd) {
-            fetch('/api/control/' + cmd, { method: 'POST' });
+        function speak(text) {
+            if (!voiceEnabled || !window.speechSynthesis) return;
+            const now = Date.now();
+            if (text === lastSpokenText && (now - lastSpeechTime) < 3000) return;
+            lastSpokenText = text;
+            lastSpeechTime = now;
+
+            window.speechSynthesis.cancel();
+            const utter = new SpeechSynthesisUtterance(text);
+            utter.rate = 1.1;
+            utter.pitch = 1.0;
+            window.speechSynthesis.speak(utter);
         }
 
-        function updateTelemetry() {
+        function updateUI() {
             fetch('/api/telemetry')
                 .then(r => r.json())
                 .then(data => {
-                    document.getElementById('gpsLat').innerText = data.lat.toFixed(6);
-                    document.getElementById('gpsLng').innerText = data.lng.toFixed(6);
-                    document.getElementById('gpsSpeed').innerText = data.speed.toFixed(1);
-                    document.getElementById('imuAx').innerText = data.ax.toFixed(2);
-                    document.getElementById('imuAy').innerText = data.ay.toFixed(2);
-                    document.getElementById('detTarget').innerText = data.last_target || 'Scanning...';
-                    document.getElementById('detAction').innerText = data.current_action;
-                    
+                    // Update Guidance & Voice
+                    const guidance = data.guidance || "Path clear";
+                    document.getElementById('guidanceText').innerText = guidance;
+                    if (data.alert_speech) {
+                        speak(data.alert_speech);
+                    }
+
+                    // Haptics
+                    document.getElementById('hapLeft').classList.toggle('haptic-active', data.haptic === 'L');
+                    document.getElementById('hapCenter').classList.toggle('haptic-active', data.haptic === 'C' || data.haptic === 'S_HAZARD');
+                    document.getElementById('hapRight').classList.toggle('haptic-active', data.haptic === 'R');
+
+                    // IMU
+                    document.getElementById('imuStatus').innerText = data.imu_ok ? "ONLINE (MPU-6050)" : "DISCONNECTED";
+                    document.getElementById('imuStatus').style.color = data.imu_ok ? "var(--accent-green)" : "var(--accent-red)";
+                    document.getElementById('imuAcc').innerText = `${data.ax.toFixed(1)}, ${data.ay.toFixed(1)}, ${data.az.toFixed(1)}`;
+
+                    // Fall Alert
+                    const fallEl = document.getElementById('fallBadge');
+                    if (data.fall_alert) {
+                        fallEl.innerText = "⚠️ FALL DETECTED!";
+                        fallEl.style.color = "var(--accent-red)";
+                        speak("Emergency! Fall detected!");
+                    } else {
+                        fallEl.innerText = "NORMAL";
+                        fallEl.style.color = "var(--accent-green)";
+                    }
+
+                    // SOS
+                    const sosEl = document.getElementById('sosBadge');
+                    if (data.sos) {
+                        sosEl.innerText = "🚨 SOS ACTIVE!";
+                        sosEl.style.color = "var(--accent-red)";
+                    } else {
+                        sosEl.innerText = "STANDBY";
+                        sosEl.style.color = "var(--text-dim)";
+                    }
+
+                    // GPS
+                    document.getElementById('gpsSats').innerText = `${data.sats} Satellites`;
+                    if (data.lat !== 0 && data.lng !== 0) {
+                        document.getElementById('gpsFixStatus').innerText = "3D Fix Established";
+                        document.getElementById('gpsFixStatus').style.color = "var(--accent-green)";
+                        document.getElementById('gpsCoords').innerText = `${data.lat.toFixed(6)}, ${data.lng.toFixed(6)} (${data.speed.toFixed(1)} km/h)`;
+                        document.getElementById('mapsLink').href = `https://www.google.com/maps?q=${data.lat},${data.lng}`;
+                    } else {
+                        document.getElementById('gpsFixStatus').innerText = data.sats > 0 ? "Acquiring 3D fix..." : "Searching (Go near window/outdoors)";
+                        document.getElementById('gpsFixStatus').style.color = "var(--accent-yellow)";
+                        document.getElementById('gpsCoords').innerText = "Searching coordinates...";
+                    }
+
+                    // Log
                     if (data.events && data.events.length) {
-                        const logEl = document.getElementById('eventLog');
-                        logEl.innerHTML = data.events.slice(-5).map(e => `[${e.time}] ${e.text}`).join('<br>');
+                        document.getElementById('eventLog').innerHTML = data.events.slice(-5).map(e => `[${e.time}] ${e.text}`).join('<br>');
                     }
                 })
                 .catch(() => {
-                    document.getElementById('connStatus').innerText = 'OFFLINE';
-                    document.getElementById('connStatus').style.color = '#ff3366';
+                    document.getElementById('sysStatus').innerText = 'OFFLINE';
+                    document.getElementById('sysStatus').style.color = 'var(--accent-red)';
                 });
         }
 
-        setInterval(updateTelemetry, 500);
+        setInterval(updateUI, 300);
     </script>
 </body>
 </html>

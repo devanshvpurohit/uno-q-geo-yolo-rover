@@ -1,49 +1,26 @@
-# Arduino UNO Q (4GB) Geo-Aware YOLO Vision Rover
+# SURDAS: AI-Powered Assistive Vision & Navigation Platform for the Blind
 
-An autonomous vision-guided robotics system built for the **Arduino UNO Q (4GB)**. 
-
-**Operates 100% standalone — NO Arduino App Lab or mobile app required.**
-Connect to the rover from any browser (on your phone, tablet, or PC) over Wi-Fi, or let it run autonomously on boot.
+An intelligent assistive wearable system designed for visually impaired individuals, powered by the **Arduino UNO Q (4GB)** dual-core architecture (Qualcomm QRB2210 Linux MPU + STM32U585 Real-Time MCU).
 
 ---
 
-## Key Features
+## Key Assistive Features
 
-* **No External App Needed:** The UNO Q Debian MPU runs an embedded responsive Web Dashboard on port `5000`.
-* **Real-Time Edge AI:** Direct YOLOv8 Nano inference on the 4GB Qualcomm QRB2210 core.
-* **Dual-Brain Architecture:** Qualcomm MPU handles high-level vision and web streaming; STM32 MCU handles low-latency GPS (NEO-6M), IMU (MPU-6050), and motor driving.
-* **Live Web HUD (`http://unoq.local:5000`):**
-  * Live camera stream with YOLO bounding boxes and confidence scores.
-  * Real-time GPS Latitude, Longitude, and Speed gauges.
-  * 6-DOF IMU Pitch and Roll indicators.
-  * Switch between **Autonomous YOLO Navigation** and **Manual D-Pad Controls**.
-  * One-click download for geo-tagged detection CSV logs.
-* **Auto-Start on Boot:** Includes a `systemd` service so the rover runs immediately when powered by battery.
-
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│              Qualcomm Dragonwing QRB2210 (MPU)                  │
-│                   Debian 13 Linux (4GB RAM)                     │
-│                                                                 │
-│  - USB / CSI Camera Feed                                        │
-│  - YOLOv8 Nano Edge AI Inference                                │
-│  - Embedded Web Server (Flask + MJPEG Stream on Port 5000)      │
-│  - Geo-referenced CSV Event Logging                             │
-└────────────────────────────────┬────────────────────────────────┘
-                                 │ Internal Bridge Serial / RPC
-┌────────────────────────────────┴────────────────────────────────┐
-│                   STM32U585 Microcontroller (MCU)               │
-│                        Real-Time Control                        │
-│                                                                 │
-│  - NEO-6M / M8N GPS (Pins D4, D3 via SoftwareSerial)           │
-│  - MPU-6050 6-DOF IMU (I2C / Qwiic Pins SDA, SCL)              │
-│  - Dual DC Motor Driver (PWM Pins D5, D6, D7, D8, D9, D10)      │
-└─────────────────────────────────────────────────────────────────┘
-```
+1. **Ultra-Fast Edge Vision (YOLOv8):**
+   * Optimized 320x320 inference with frame-skipping running locally on the 4GB Qualcomm MPU.
+   * Recognizes people, obstacles, doors, stairs, chairs, and vehicles with high accuracy.
+2. **Directional Haptic Feedback (STM32 MCU):**
+   * Three haptic vibration channels alert the user tactically without relying solely on hearing:
+     * **Left Motor (Pin D5):** Obstacle detected on the left.
+     * **Center Motor / Buzzer (Pin D6):** Hazard directly ahead (Stop command).
+     * **Right Motor (Pin D7):** Obstacle detected on the right.
+3. **Real-Time Voice Assistant (Text-to-Speech):**
+   * The web interface runs speech synthesis directly through your phone/earphones (e.g., *"Caution: Person on your left"*, *"Stop! Obstacle directly in front of you"*).
+4. **IMU Fall Detection & Orientation (MPU-6050):**
+   * Continuously monitors G-force dynamics ($>2.8g$ impact or free-fall); triggers an emergency Fall Alert with GPS location if a fall occurs.
+5. **Geo-Location & SOS Emergency (NEO-6M GPS):**
+   * Satellite tracking with live coordinates and satellite count diagnostics.
+   * Emergency pushbutton on Pin D2 sends instant SOS coordinates.
 
 ---
 
@@ -52,78 +29,62 @@ Connect to the rover from any browser (on your phone, tablet, or PC) over Wi-Fi,
 ### 1. GPS Module (NEO-6M / M8N) $\to$ Arduino UNO Q
 | GPS Pin | Arduino UNO Q Pin | Description |
 |---|---|---|
-| `VCC` | `5V` (or `3.3V`) | Power supply |
-| `GND` | `GND` | Common Ground |
-| `TX` | `Pin 0 (RX)` | GPS serial transmit $\to$ MCU Hardware `Serial1` RX |
-| `RX` | `Pin 1 (TX)` | GPS serial receive $\to$ MCU Hardware `Serial1` TX |
+| `VCC` | `5V` (or `3.3V`) | Power |
+| `GND` | `GND` | Ground |
+| `TX` | `Pin 0 (RX)` | GPS Serial Transmit $\to$ MCU Hardware `Serial1` RX |
+| `RX` | `Pin 1 (TX)` | GPS Serial Receive $\to$ MCU Hardware `Serial1` TX |
 
 ### 2. IMU Module (MPU-6050) $\to$ Arduino UNO Q
 | MPU-6050 Pin | Arduino UNO Q Pin | Description |
 |---|---|---|
-| `VCC` | `5V` (or `3.3V`) | Power supply |
-| `GND` | `GND` | Common Ground |
+| `VCC` | `5V` (or `3.3V`) | Power |
+| `GND` | `GND` | Ground |
 | `SDA` | `SDA` (or `A4` / Qwiic) | I2C Data |
 | `SCL` | `SCL` (or `A5` / Qwiic) | I2C Clock |
 
-### 3. Motor Driver (L298N / TB6612FNG) $\to$ Arduino UNO Q
-| Motor Driver Pin | Arduino UNO Q Pin | Function |
+### 3. Haptics, Buzzer & SOS $\to$ Arduino UNO Q
+| Peripheral | Arduino UNO Q Pin | Description |
 |---|---|---|
-| `ENA` | `Pin D5` | Left Motor Speed (PWM) |
-| `IN1` | `Pin D6` | Left Motor Direction |
-| `IN2` | `Pin D7` | Left Motor Direction |
-| `IN3` | `Pin D8` | Right Motor Direction |
-| `IN4` | `Pin D9` | Right Motor Direction |
-| `ENB` | `Pin D10` | Right Motor Speed (PWM) |
+| **Left Haptic Motor** | `Pin D5` | Vibrates on left hazard |
+| **Center Haptic / Buzzer** | `Pin D6` | Vibrates on frontal hazard |
+| **Right Haptic Motor** | `Pin D7` | Vibrates on right hazard |
+| **SOS Pushbutton** | `Pin D2` | Connected to GND (Internal PULLUP) |
 
 ---
 
-## Quickstart (No App Required)
+## Quickstart & Deployment
 
-### 1. SSH into the UNO Q & Clone
+### 1. Pull the Updates on the UNO Q
 ```bash
-ssh arduino@unoq.local
-git clone https://github.com/devanshvpurohit/uno-q-geo-yolo-rover.git
-cd uno-q-geo-yolo-rover
+cd ~/uno-q-geo-yolo-rover
+git fetch origin main
+git reset --hard origin/main
 ```
 
-### 2. Run Setup
-```bash
-chmod +x setup.sh run.sh flash_mcu.sh
-./setup.sh
-```
-
-*(Optional: Enable auto-start on boot)*
-```bash
-./setup.sh --enable-autostart
-```
-
-### 3. Flash the STM32 MCU (No IDE needed)
-Flash the microcontroller core directly via CLI:
+### 2. Flash the STM32 Assistive Firmware
 ```bash
 ./flash_mcu.sh
 ```
 
-### 4. Launch Rover
+### 3. Launch SURDAS Vision
 ```bash
 ./run.sh
 ```
 
 ---
 
-## Access the Web Dashboard
+## Using the Assistive Dashboard
 
-Open any web browser on your phone, tablet, or laptop connected to the same Wi-Fi:
+Open any web browser on your phone connected to the same Wi-Fi:
 
 ```
 http://unoq.local:5000
 ```
 *(or `http://<UNO_Q_IP_ADDRESS>:5000`)*
 
-From this page you can:
-1. Watch the live camera feed with YOLO detection bounding boxes.
-2. Monitor real-time GPS coordinates and IMU orientation.
-3. Toggle between **Auto Mode** and **Manual D-Pad** driving.
-4. Download the `geo_detections_log.csv` file.
+* Tap **"ENABLE VOICE ASSISTANT"**: The phone will start announcing detected obstacles and navigation cues through your headphones or speaker.
+* Monitor live **Fall Detection**, **GPS coordinates**, and **Satellite count**.
+* Haptic feedback automatically drives vibration motors on pins D5, D6, and D7.
 
 ---
 
