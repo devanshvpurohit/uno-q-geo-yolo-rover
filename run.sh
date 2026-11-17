@@ -32,4 +32,4 @@ if ! "$PYTHON_CMD" -c "import flask; from arduino.router_bridge import Bridge" &
 fi
 
 echo "Starting SURDAS GPS + IMU Platform with $PYTHON_CMD..."
-exec "$PYTHON_CMD" python/main.py
+exec "$PYTHON_CMD" -u python/main.py
