@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-SURDAS: Real-Time Assistive GPS & IMU Platform for Arduino UNO Q (4GB)
-Direct high-reliability telemetry engine:
-Streams native 'arduino-app-cli monitor' with zero-buffering line processing.
+SURDAS: Real-Time Assistive Vision, Spatial AI & Telemetry Engine for Arduino UNO Q (4GB)
+- Hardware Telemetry: GPS (NEO-6M), IMU (MPU-6050, fall detection) via native monitor stream
+- Vision & Spatial AI: YOLOv8n object detection + MiDaS depth estimation via ONNX Runtime
+- Hands-Free Speech Guidance: Natural spatial announcements for visually impaired navigation
 """
 
 import csv
@@ -15,9 +16,15 @@ import sys
 import threading
 import time
 from datetime import datetime
-from flask import Flask, render_template, jsonify, send_file
+from flask import Flask, render_template, jsonify, send_file, Response
+
+from ai_vision import AIVisionEngine
 
 app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), 'templates'))
+
+# Initialize AI Vision Engine
+ai_engine = AIVisionEngine(models_dir=os.path.join(os.path.dirname(__file__), "..", "models"))
+ai_engine.start()
 
 # Shared Telemetry State
 telemetry = {
@@ -40,6 +47,9 @@ telemetry = {
     "gps_bytes": 0,
     "bridge_connected": True,
     "last_update": "None",
+    "ai_guidance": "SURDAS vision scanning environment...",
+    "detected_objects": [],
+    "spatial_sectors": {"left": 0.0, "center": 0.0, "right": 0.0},
     "events": []
 }
 telemetry_lock = threading.Lock()
@@ -48,7 +58,7 @@ LOG_FILE = os.path.join(os.path.dirname(__file__), "..", "telemetry_log.csv")
 if not os.path.exists(LOG_FILE):
     with open(LOG_FILE, mode='w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(["Timestamp", "Lat", "Lng", "Sats", "Speed_kmh", "Alt_m", "Pitch", "Roll", "Ax", "Ay", "Az", "Fall_Alert"])
+        writer.writerow(["Timestamp", "Lat", "Lng", "Sats", "Speed_kmh", "Alt_m", "Pitch", "Roll", "Ax", "Ay", "Az", "Fall_Alert", "Guidance"])
 
 def update_fall_detection(ax, ay, az):
     total_g = math.sqrt(ax * ax + ay * ay + az * az)
@@ -193,7 +203,7 @@ def parse_line(line, state):
             telemetry['fall_alert'] = False
 
 def monitor_stream_worker():
-    """Background thread that reads telemetry from 'arduino-app-cli monitor' without line buffering"""
+    """Background thread that reads telemetry from 'arduino-app-cli monitor'"""
     state = {'section': ''}
     last_print = 0
 
@@ -218,11 +228,15 @@ def monitor_stream_worker():
                 if time.time() - last_print >= 1.0:
                     last_print = time.time()
                     with telemetry_lock:
+                        # Pull live AI guidance
+                        telemetry['ai_guidance'] = ai_engine.latest_guidance
+                        telemetry['detected_objects'] = [d["class"] for d in ai_engine.latest_detections]
+                        telemetry['spatial_sectors'] = ai_engine.spatial_sectors
                         t = telemetry.copy()
 
                     gps_str = f"{t['lat']:.5f}, {t['lng']:.5f} ({t['sats']} Sats, {t['speed']:.1f} km/h)" if t['lat'] != 0.0 else f"Searching ({t['sats']} Sats, {t['gps_bytes']} bytes rx)"
                     imu_str = f"OK (P:{t['pitch']:.1f}°, R:{t['roll']:.1f}°)" if t['imu_ok'] else "OFF"
-                    print(f"[SURDAS] Monitor: STREAMING | IMU: {imu_str} | GPS: {gps_str}", flush=True)
+                    print(f"[SURDAS] IMU: {imu_str} | GPS: {gps_str} | AI: {t['ai_guidance'][:45]}", flush=True)
 
             proc.wait()
         except FileNotFoundError:
@@ -236,14 +250,22 @@ def monitor_stream_worker():
 worker_thread = threading.Thread(target=monitor_stream_worker, daemon=True)
 worker_thread.start()
 
-# Flask API Endpoints
+# Flask Endpoints
 @app.route('/')
 def index():
     return render_template('index.html')
 
+@app.route('/video_feed')
+def video_feed():
+    """Live video stream with YOLO detections & MiDaS depth heatmap overlay"""
+    return Response(ai_engine.get_jpeg_stream(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
 @app.route('/api/telemetry')
 def get_telemetry_api():
     with telemetry_lock:
+        telemetry['ai_guidance'] = ai_engine.latest_guidance
+        telemetry['detected_objects'] = [d["class"] for d in ai_engine.latest_detections]
+        telemetry['spatial_sectors'] = ai_engine.spatial_sectors
         return jsonify(telemetry)
 
 @app.route('/api/download_log')
@@ -255,7 +277,7 @@ def download_log():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     print(f"\n==========================================================", flush=True)
-    print(f"📍 SURDAS Assistive GPS + IMU Live Dashboard: http://0.0.0.0:{port}", flush=True)
+    print(f"📍 SURDAS Assistive AI Prototype Live: http://0.0.0.0:{port}", flush=True)
     print(f"   Open in browser: http://unoq.local:{port} or http://192.168.29.84:{port}", flush=True)
     print(f"==========================================================\n", flush=True)
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)

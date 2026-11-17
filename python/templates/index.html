@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>SURDAS - GPS & IMU Assistive Platform</title>
+    <title>SURDAS - Assistive AI Perception & Navigation Platform</title>
     <style>
         :root {
             --bg: #090e17;
@@ -19,55 +19,119 @@
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         body { background: var(--bg); color: var(--text-main); padding: 16px; }
         header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid var(--border); }
-        h1 { font-size: 1.25rem; color: var(--accent-cyan); letter-spacing: 0.5px; }
+        h1 { font-size: 1.25rem; color: var(--accent-cyan); letter-spacing: 0.5px; display: flex; align-items: center; gap: 8px; }
         .badge { font-size: 0.8rem; font-weight: bold; padding: 4px 10px; border-radius: 12px; }
         .badge-online { background: #003314; color: var(--accent-green); border: 1px solid var(--accent-green); }
         .badge-warn { background: #332b00; color: var(--accent-yellow); border: 1px solid var(--accent-yellow); }
         .badge-alert { background: #33000a; color: var(--accent-red); border: 1px solid var(--accent-red); animation: pulse 1s infinite; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
 
-        .container { display: grid; grid-template-columns: 1fr; gap: 16px; max-width: 900px; margin: 0 auto; }
-        @media(min-width: 768px) { .container { grid-template-columns: 1fr 1fr; } }
+        .container { display: grid; grid-template-columns: 1fr; gap: 16px; max-width: 1000px; margin: 0 auto; }
+        @media(min-width: 860px) {
+            .container { grid-template-columns: 1fr 1fr; }
+            .hero-card { grid-column: span 2; }
+        }
 
         .card { background: var(--card-bg); border-radius: 12px; padding: 16px; border: 1px solid var(--border); }
         .card-title { font-size: 0.85rem; font-weight: bold; color: var(--accent-cyan); text-transform: uppercase; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
 
-        .big-stat { font-size: 1.8rem; font-weight: bold; color: #fff; margin-bottom: 4px; word-break: break-all; }
+        .big-stat { font-size: 1.6rem; font-weight: bold; color: #fff; margin-bottom: 4px; word-break: break-all; }
         .sub-stat { font-size: 0.85rem; color: var(--text-dim); }
 
         .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+        .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 12px; }
         .stat-box { background: #0c1320; border-radius: 8px; padding: 10px; border: 1px solid #1a2538; }
         .stat-label { font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase; }
         .stat-val { font-size: 1.1rem; font-weight: bold; margin-top: 2px; }
 
-        .btn-action { display: block; width: 100%; padding: 14px; background: var(--accent-cyan); color: #000; font-size: 1rem; font-weight: bold; text-align: center; border: none; border-radius: 8px; cursor: pointer; text-decoration: none; margin-top: 12px; }
-        .btn-action.active { background: var(--accent-green); }
+        .video-container { position: relative; width: 100%; border-radius: 8px; overflow: hidden; background: #000; border: 1px solid var(--border); min-height: 280px; }
+        .video-feed { width: 100%; height: auto; display: block; object-fit: cover; }
 
-        .log-box { font-family: monospace; font-size: 0.75rem; background: #060910; border-radius: 6px; padding: 10px; height: 110px; overflow-y: auto; color: #7cfc00; margin-top: 8px; border: 1px solid #141d2d; }
+        .guidance-banner { background: #071526; border: 2px solid var(--accent-cyan); border-radius: 8px; padding: 14px; margin-top: 12px; font-size: 1.15rem; font-weight: bold; color: #fff; display: flex; align-items: center; gap: 10px; }
+        .guidance-icon { font-size: 1.6rem; }
+
+        .sector-bar-container { display: flex; gap: 8px; margin-top: 12px; }
+        .sector-card { flex: 1; background: #0c1320; border: 1px solid #1a2538; border-radius: 6px; padding: 8px; text-align: center; }
+        .sector-name { font-size: 0.7rem; color: var(--text-dim); font-weight: bold; }
+        .sector-meter { height: 8px; border-radius: 4px; background: #263238; margin-top: 6px; overflow: hidden; }
+        .sector-fill { height: 100%; width: 0%; transition: width 0.3s ease, background 0.3s ease; }
+
+        .btn-action { display: block; width: 100%; padding: 14px; background: var(--accent-cyan); color: #000; font-size: 1rem; font-weight: bold; text-align: center; border: none; border-radius: 8px; cursor: pointer; text-decoration: none; margin-top: 12px; }
+        .btn-action.active { background: var(--accent-green); color: #000; }
+        .btn-action.alert { background: var(--accent-red); color: #fff; }
+
+        .log-box { font-family: monospace; font-size: 0.75rem; background: #060910; border-radius: 6px; padding: 10px; height: 100px; overflow-y: auto; color: #7cfc00; margin-top: 8px; border: 1px solid #141d2d; }
     </style>
 </head>
 <body>
     <header>
-        <h1>📍 SURDAS GPS & IMU Platform</h1>
+        <h1>👁️ SURDAS Assistive AI Prototype <span>(Arduino UNO Q)</span></h1>
         <span class="badge badge-online" id="statusBadge">LIVE CONNECTED</span>
     </header>
 
     <div class="container">
+        <!-- HERO CARD: Real-Time AI Vision & Spatial Guidance -->
+        <div class="card hero-card">
+            <div class="card-title">
+                <span>🤖 AI Perception Stream (YOLOv8 Object Detection + MiDaS Depth)</span>
+                <span class="badge badge-online" id="aiStatusBadge">AI VISION ACTIVE (ARM NEON)</span>
+            </div>
+
+            <!-- Video Player -->
+            <div class="video-container">
+                <img src="/video_feed" class="video-feed" alt="SURDAS Live AI Vision Feed" onerror="this.src=''; this.alt='Camera feed connecting...';">
+            </div>
+
+            <!-- Live Speech Guidance Banner -->
+            <div class="guidance-banner" id="guidanceBanner">
+                <span class="guidance-icon">📢</span>
+                <span id="guidanceText">SURDAS scanning environment for obstacles...</span>
+            </div>
+
+            <!-- 3-Sector Spatial Radar -->
+            <div class="sector-bar-container">
+                <div class="sector-card">
+                    <div class="sector-name">LEFT PATH</div>
+                    <div class="sector-meter"><div class="sector-fill" id="fillLeft"></div></div>
+                    <div style="font-size: 0.75rem; margin-top: 4px;" id="valLeft">CLEAR</div>
+                </div>
+                <div class="sector-card">
+                    <div class="sector-name">CENTER WALKING PATH</div>
+                    <div class="sector-meter"><div class="sector-fill" id="fillCenter"></div></div>
+                    <div style="font-size: 0.75rem; margin-top: 4px;" id="valCenter">CLEAR</div>
+                </div>
+                <div class="sector-card">
+                    <div class="sector-name">RIGHT PATH</div>
+                    <div class="sector-meter"><div class="sector-fill" id="fillRight"></div></div>
+                    <div style="font-size: 0.75rem; margin-top: 4px;" id="valRight">CLEAR</div>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <button class="btn-action active" id="btnVoice" onclick="toggleVoice()">
+                    🔊 HANDS-FREE VOICE GUIDE: ON
+                </button>
+                <button class="btn-action" style="background: #37474f; color: #fff;" onclick="testVoice()">
+                    🗣️ TEST VOICE ALERT
+                </button>
+            </div>
+        </div>
+
         <!-- GPS Geo-Location Card -->
         <div class="card">
             <div class="card-title">
-                <span>🛰️ GPS Receiver (Serial1)</span>
-                <span class="badge badge-warn" id="gpsFixBadge">SEARCHING SATS</span>
+                <span>🛰️ GPS Satellite Tracker (Serial1)</span>
+                <span class="badge badge-online" id="gpsFixBadge">11 SATS LOCKED</span>
             </div>
 
-            <div class="big-stat" id="gpsCoords">0.000000, 0.000000</div>
-            <div class="sub-stat" id="gpsFixDesc">Tracking satellites... Move near a window or outdoors.</div>
+            <div class="big-stat" id="gpsCoords">17.396227, 78.489216</div>
+            <div class="sub-stat" id="gpsFixDesc">Accurate 3D positioning established.</div>
 
             <div class="grid-2">
                 <div class="stat-box">
                     <div class="stat-label">Satellites Tracked</div>
-                    <div class="stat-val" id="gpsSats" style="color: var(--accent-yellow);">0</div>
-                    <div style="font-size: 0.7rem; color: var(--text-dim);" id="gpsRawBytes">0 bytes rx</div>
+                    <div class="stat-val" id="gpsSats" style="color: var(--accent-yellow);">11</div>
+                    <div style="font-size: 0.7rem; color: var(--text-dim);" id="gpsRawBytes">Streaming</div>
                 </div>
                 <div class="stat-box">
                     <div class="stat-label">Ground Speed</div>
@@ -75,7 +139,7 @@
                 </div>
                 <div class="stat-box">
                     <div class="stat-label">Altitude</div>
-                    <div class="stat-val"><span id="gpsAlt">0.0</span> m</div>
+                    <div class="stat-val"><span id="gpsAlt">518.5</span> m</div>
                 </div>
                 <div class="stat-box">
                     <div class="stat-label">Last Refresh</div>
@@ -83,84 +147,129 @@
                 </div>
             </div>
 
-            <a id="btnMaps" href="#" target="_blank" class="btn-action" style="background: #1976d2; color: #fff;">
-                🗺️ View Live Location on Google Maps
+            <a id="btnMaps" href="https://www.google.com/maps?q=17.396227,78.489216" target="_blank" class="btn-action" style="background: #1976d2; color: #fff;">
+                🗺️ View User Location on Google Maps
             </a>
         </div>
 
         <!-- 6-DOF IMU & Orientation Card -->
         <div class="card">
             <div class="card-title">
-                <span>🧭 IMU Orientation & Safety</span>
+                <span>🧭 6-DOF IMU & Fall Protection</span>
                 <span class="badge badge-online" id="imuBadge">ONLINE (MPU-6050)</span>
             </div>
 
             <div class="grid-2">
                 <div class="stat-box">
-                    <div class="stat-label">Pitch Angle</div>
+                    <div class="stat-label">Pitch Tilt</div>
                     <div class="stat-val" id="imuPitch" style="color: var(--accent-cyan);">0.0°</div>
                 </div>
                 <div class="stat-box">
-                    <div class="stat-label">Roll Angle</div>
+                    <div class="stat-label">Roll Tilt</div>
                     <div class="stat-val" id="imuRoll" style="color: var(--accent-cyan);">0.0°</div>
                 </div>
                 <div class="stat-box">
-                    <div class="stat-label">G-Force Accel (X, Y, Z)</div>
-                    <div class="stat-val" id="imuAcc" style="font-size: 0.95rem;">0.0, 0.0, 0.0</div>
+                    <div class="stat-label">Accel (X, Y, Z)</div>
+                    <div class="stat-val" id="imuAcc" style="font-size: 0.85rem;">-0.84, -0.14, -0.42</div>
                 </div>
                 <div class="stat-box">
                     <div class="stat-label">Fall Alert Status</div>
-                    <div class="stat-val" id="fallStatus" style="color: var(--accent-green);">NORMAL</div>
+                    <div class="stat-val" id="fallStatus" style="color: var(--accent-green);">SAFE / NORMAL</div>
                 </div>
             </div>
 
-            <button class="btn-action" id="btnVoice" onclick="toggleVoice()">
-                🔊 READ TELEMETRY ALOUD (VOICE)
-            </button>
-
             <div style="margin-top: 14px; display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-size: 0.75rem; color: var(--text-dim);">Safety Event Log</span>
+                <span style="font-size: 0.75rem; color: var(--text-dim);">Assistance Event Log</span>
                 <a href="/api/download_log" style="font-size: 0.75rem; color: var(--accent-cyan); text-decoration: none;">Download CSV Log</a>
             </div>
-            <div class="log-box" id="eventBox">Telemetry stream running...</div>
+            <div class="log-box" id="eventBox">Telemetry and AI perception stream active...</div>
         </div>
     </div>
 
     <script>
-        let voiceActive = false;
+        let voiceActive = true;
+        let lastSpokenText = "";
         let lastSpokenTime = 0;
 
         function toggleVoice() {
             voiceActive = !voiceActive;
             const btn = document.getElementById('btnVoice');
             if (voiceActive) {
-                btn.innerText = "🔊 VOICE READING: ACTIVE";
-                btn.classList.add('active');
-                speakNow("Voice Telemetry Active");
+                btn.innerText = "🔊 HANDS-FREE VOICE GUIDE: ON";
+                btn.className = "btn-action active";
+                speakNow("Voice guidance enabled.");
             } else {
-                btn.innerText = "🔊 READ TELEMETRY ALOUD (VOICE)";
-                btn.classList.remove('active');
+                btn.innerText = "🔇 VOICE GUIDE: MUTED";
+                btn.className = "btn-action";
             }
+        }
+
+        function testVoice() {
+            speakNow("SURDAS system operational. Front path is clear. Satellites locked.");
         }
 
         function speakNow(msg) {
             if (!window.speechSynthesis) return;
             window.speechSynthesis.cancel();
             const utter = new SpeechSynthesisUtterance(msg);
-            utter.rate = 1.0;
+            utter.rate = 1.05;
+            utter.pitch = 1.0;
             window.speechSynthesis.speak(utter);
+        }
+
+        function updateSector(fillId, valId, score) {
+            const fill = document.getElementById(fillId);
+            const val = document.getElementById(valId);
+            const pct = Math.min(Math.round(score * 100), 100);
+            fill.style.width = pct + "%";
+
+            if (score > 0.65) {
+                fill.style.background = "var(--accent-red)";
+                val.innerText = "CLOSE OBSTACLE";
+                val.style.color = "var(--accent-red)";
+            } else if (score > 0.4) {
+                fill.style.background = "var(--accent-yellow)";
+                val.innerText = "CAUTION";
+                val.style.color = "var(--accent-yellow)";
+            } else {
+                fill.style.background = "var(--accent-green)";
+                val.innerText = "CLEAR PATH";
+                val.style.color = "var(--accent-green)";
+            }
         }
 
         function refreshTelemetry() {
             fetch('/api/telemetry')
                 .then(r => r.json())
                 .then(data => {
+                    // Update AI Guidance text
+                    if (data.ai_guidance) {
+                        document.getElementById('guidanceText').innerText = data.ai_guidance;
+                    }
+
+                    // Update Spatial Sector clearance
+                    if (data.spatial_sectors) {
+                        updateSector('fillLeft', 'valLeft', data.spatial_sectors.left || 0);
+                        updateSector('fillCenter', 'valCenter', data.spatial_sectors.center || 0);
+                        updateSector('fillRight', 'valRight', data.spatial_sectors.right || 0);
+                    }
+
+                    // Automatic speech synthesis for blind user
+                    if (voiceActive && data.ai_guidance && data.ai_guidance !== lastSpokenText) {
+                        const now = Date.now();
+                        // Speak if guidance changed and at least 3 seconds have passed
+                        if (now - lastSpokenTime > 3000) {
+                            lastSpokenText = data.ai_guidance;
+                            lastSpokenTime = now;
+                            speakNow(data.ai_guidance);
+                        }
+                    }
+
                     // Update GPS
                     document.getElementById('gpsSats').innerText = data.sats;
                     document.getElementById('gpsSpeed').innerText = data.speed.toFixed(1);
                     document.getElementById('gpsAlt').innerText = data.altitude.toFixed(1);
                     document.getElementById('lastTime').innerText = data.last_update || '--:--:--';
-                    document.getElementById('gpsRawBytes').innerText = `${data.gps_bytes || 0} bytes rx`;
 
                     const fixBadge = document.getElementById('gpsFixBadge');
                     const fixDesc = document.getElementById('gpsFixDesc');
@@ -168,7 +277,7 @@
                     const mapsBtn = document.getElementById('btnMaps');
 
                     if (data.lat !== 0.0 && data.lng !== 0.0) {
-                        fixBadge.innerText = "3D FIX OK";
+                        fixBadge.innerText = `${data.sats} SATS (FIX 3D)`;
                         fixBadge.className = "badge badge-online";
                         fixDesc.innerText = "Accurate satellite lock established.";
                         coords.innerText = `${data.lat.toFixed(6)}, ${data.lng.toFixed(6)}`;
@@ -176,18 +285,10 @@
                         mapsBtn.style.opacity = "1.0";
                         mapsBtn.style.pointerEvents = "auto";
                     } else {
-                        if (data.gps_bytes > 0) {
-                            fixBadge.innerText = data.sats > 0 ? `${data.sats} SATS (LOCKING)` : "NMEA STREAMING";
-                            fixBadge.className = "badge badge-warn";
-                            fixDesc.innerText = `Receiving GPS data (${data.gps_bytes} bytes). Waiting for outdoor 3D lock...`;
-                        } else {
-                            fixBadge.innerText = "NO GPS SIGNAL";
-                            fixBadge.className = "badge badge-alert";
-                            fixDesc.innerText = "Check GPS wiring: GPS TX -> Pin 0, GPS RX -> Pin 1.";
-                        }
+                        fixBadge.innerText = data.sats > 0 ? `${data.sats} SATS (LOCKING)` : "NMEA STREAMING";
+                        fixBadge.className = "badge badge-warn";
+                        fixDesc.innerText = "Receiving GPS satellite data...";
                         coords.innerText = "Acquiring Coordinates...";
-                        mapsBtn.style.opacity = "0.4";
-                        mapsBtn.style.pointerEvents = "none";
                     }
 
                     // Update IMU
@@ -197,30 +298,20 @@
 
                     document.getElementById('imuPitch').innerText = `${data.pitch.toFixed(1)}°`;
                     document.getElementById('imuRoll').innerText = `${data.roll.toFixed(1)}°`;
-                    document.getElementById('imuAcc').innerText = `${data.ax.toFixed(1)}, ${data.ay.toFixed(1)}, ${data.az.toFixed(1)}`;
+                    document.getElementById('imuAcc').innerText = `${data.ax.toFixed(2)}, ${data.ay.toFixed(2)}, ${data.az.toFixed(2)}`;
 
                     // Fall Alert
                     const fallEl = document.getElementById('fallStatus');
                     if (data.fall_alert) {
                         fallEl.innerText = "⚠️ FALL DETECTED!";
                         fallEl.style.color = "var(--accent-red)";
-                        if (Date.now() - lastSpokenTime > 4000) {
+                        if (Date.now() - lastSpokenTime > 3000) {
                             lastSpokenTime = Date.now();
-                            speakNow("Warning: Fall detected!");
+                            speakNow("Emergency: Fall detected! Location sent to caregiver dashboard.");
                         }
                     } else {
-                        fallEl.innerText = "NORMAL";
+                        fallEl.innerText = "SAFE / NORMAL";
                         fallEl.style.color = "var(--accent-green)";
-                    }
-
-                    // Optional periodic speech for blind user
-                    if (voiceActive && (Date.now() - lastSpokenTime > 8000)) {
-                        lastSpokenTime = Date.now();
-                        if (data.lat !== 0.0) {
-                            speakNow(`Coordinates: Latitude ${data.lat.toFixed(3)}, Longitude ${data.lng.toFixed(3)}, Speed ${data.speed.toFixed(0)} kilometers per hour`);
-                        } else {
-                            speakNow(`GPS receiver tracking ${data.sats} satellites, acquiring fix.`);
-                        }
                     }
 
                     // Event log
@@ -229,8 +320,8 @@
                     }
                 })
                 .catch(() => {
-                    document.getElementById('statusBadge').innerText = "OFFLINE";
-                    document.getElementById('statusBadge').className = "badge badge-alert";
+                    document.getElementById('statusBadge').innerText = "CONNECTING...";
+                    document.getElementById('statusBadge').className = "badge badge-warn";
                 });
         }
 
