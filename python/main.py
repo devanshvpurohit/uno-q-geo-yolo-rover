@@ -2,13 +2,14 @@
 """
 SURDAS: Real-Time Assistive GPS & IMU Platform for Arduino UNO Q (4GB)
 Direct high-reliability telemetry engine:
-Supports native 'arduino-app-cli monitor' stream with automated Bridge fallback.
+Streams native 'arduino-app-cli monitor' via PTY for zero-latency real-time telemetry.
 """
 
 import csv
 import json
 import math
 import os
+import pty
 import re
 import select
 import subprocess
@@ -194,25 +195,35 @@ def parse_line(line, state):
             telemetry['fall_alert'] = False
 
 def monitor_stream_worker():
-    """Background thread that reads telemetry from 'arduino-app-cli monitor'"""
+    """Background thread that reads telemetry from 'arduino-app-cli monitor' via PTY"""
     state = {'section': ''}
     last_print = 0
 
     while True:
         try:
-            print("[SURDAS] Connecting to MCU serial monitor via arduino-app-cli...", flush=True)
+            print("[SURDAS] Connecting to MCU serial monitor via arduino-app-cli PTY...", flush=True)
+            master, slave = pty.openpty()
             proc = subprocess.Popen(
                 ['arduino-app-cli', 'monitor'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1
+                stdin=subprocess.DEVNULL,
+                stdout=slave,
+                stderr=slave,
+                close_fds=True
             )
+            os.close(slave)
 
-            for line in proc.stdout:
-                parse_line(line, state)
+            buf = ""
+            while proc.poll() is None:
+                r, _, _ = select.select([master], [], [], 1.0)
+                if r:
+                    chunk = os.read(master, 1024).decode('utf-8', errors='ignore')
+                    if not chunk:
+                        break
+                    buf += chunk
+                    while '\n' in buf:
+                        line, buf = buf.split('\n', 1)
+                        parse_line(line, state)
 
-                # Periodic terminal status print
                 if time.time() - last_print >= 1.0:
                     last_print = time.time()
                     with telemetry_lock:
@@ -222,9 +233,10 @@ def monitor_stream_worker():
                     imu_str = f"OK (P:{t['pitch']:.1f}°, R:{t['roll']:.1f}°)" if t['imu_ok'] else "OFF"
                     print(f"[SURDAS] Monitor: STREAMING | IMU: {imu_str} | GPS: {gps_str}", flush=True)
 
+            os.close(master)
             proc.wait()
         except FileNotFoundError:
-            print("[SURDAS] 'arduino-app-cli' not found in PATH, trying fallback...", flush=True)
+            print("[SURDAS] 'arduino-app-cli' not found in PATH, retrying in 3s...", flush=True)
             time.sleep(3)
         except Exception as e:
             print(f"[SURDAS] Monitor stream error: {e}, reconnecting in 2s...", flush=True)
