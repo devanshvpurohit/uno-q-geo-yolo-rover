@@ -1,45 +1,24 @@
 #!/usr/bin/env python3
 """
-SURDAS: Real-Time GPS & IMU Telemetry Engine for Arduino UNO Q (4GB)
-Optimized RPC Bridge communication with STM32 MCU
+SURDAS: Real-Time Assistive GPS & IMU Platform for Arduino UNO Q (4GB)
+Direct high-reliability telemetry engine:
+Supports native 'arduino-app-cli monitor' stream with automated Bridge fallback.
 """
 
 import csv
+import json
+import math
 import os
+import re
+import select
+import subprocess
 import sys
-import time
 import threading
+import time
 from datetime import datetime
 from flask import Flask, render_template, jsonify, send_file
 
 app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), 'templates'))
-
-BridgeObj = None
-HAS_BRIDGE = False
-
-def connect_bridge(timeout=3):
-    global BridgeObj, HAS_BRIDGE
-    try:
-        from arduino.router_bridge import Bridge
-        b = Bridge()
-        b.connect(timeout=timeout)
-        BridgeObj = b
-        HAS_BRIDGE = True
-        print("[SURDAS] Connected to Arduino Router Bridge!")
-        return b
-    except Exception as e:
-        try:
-            from arduino.app_utils import Bridge
-            BridgeObj = Bridge
-            HAS_BRIDGE = True
-            print("[SURDAS] Connected using arduino.app_utils.Bridge!")
-            return Bridge
-        except Exception as e2:
-            HAS_BRIDGE = False
-            return None
-
-# Initial connection attempt
-connect_bridge(timeout=2)
 
 # Shared Telemetry State
 telemetry = {
@@ -57,9 +36,10 @@ telemetry = {
     "gz": 0.0,
     "pitch": 0.0,
     "roll": 0.0,
+    "temp": 0.0,
     "fall_alert": False,
     "gps_bytes": 0,
-    "bridge_connected": HAS_BRIDGE,
+    "bridge_connected": True,
     "last_update": "None",
     "events": []
 }
@@ -71,103 +51,188 @@ if not os.path.exists(LOG_FILE):
         writer = csv.writer(f)
         writer.writerow(["Timestamp", "Lat", "Lng", "Sats", "Speed_kmh", "Alt_m", "Pitch", "Roll", "Ax", "Ay", "Az", "Fall_Alert"])
 
-def parse_telemetry_packet(raw):
-    global telemetry
-    if not raw or not isinstance(raw, str) or not raw.startswith("$TEL"):
-        return False
+def update_fall_detection(ax, ay, az):
+    total_g = math.sqrt(ax * ax + ay * ay + az * az)
+    # Severe impact (> 2.8g) or freefall (< 0.25g)
+    return (total_g > 2.8 or (0.02 < total_g < 0.25))
 
-    p = raw.strip().split(',')
-    if len(p) >= 16:
+def parse_line(line, state):
+    """Parses live formatted serial lines from MCU"""
+    line = line.strip()
+    if not line:
+        return
+
+    if 'ACCELEROMETER' in line:
+        state['section'] = 'accel'
+    elif 'GYROSCOPE' in line:
+        state['section'] = 'gyro'
+    elif 'ORIENTATION' in line:
+        state['section'] = 'orient'
+    elif 'NEO-6M GPS' in line:
+        state['section'] = 'gps'
+    elif 'IMU DATA' in line:
+        state['section'] = 'imu'
+    elif line.startswith('IMU STATUS:'):
         with telemetry_lock:
-            telemetry["imu_ok"] = (p[1] == "1")
-            telemetry["lat"] = float(p[2])
-            telemetry["lng"] = float(p[3])
-            telemetry["sats"] = int(p[4])
-            telemetry["speed"] = float(p[5])
-            telemetry["altitude"] = float(p[6])
-            telemetry["ax"] = float(p[7])
-            telemetry["ay"] = float(p[8])
-            telemetry["az"] = float(p[9])
-            telemetry["gx"] = float(p[10])
-            telemetry["gy"] = float(p[11])
-            telemetry["gz"] = float(p[12])
-            telemetry["pitch"] = float(p[13])
-            telemetry["roll"] = float(p[14])
-            telemetry["fall_alert"] = (p[15] == "1")
-            if len(p) >= 17:
-                telemetry["gps_bytes"] = int(p[16])
-            if len(p) >= 18:
-                telemetry["imu_status_msg"] = p[17]
-            telemetry["bridge_connected"] = True
-            telemetry["last_update"] = datetime.now().strftime("%H:%M:%S")
+            telemetry['imu_ok'] = ('WORKING' in line)
+            if not telemetry['imu_ok']:
+                telemetry['imu_status_msg'] = line.split(':', 1)[1].strip()
+    elif line.startswith('X:'):
+        try:
+            val = float(line.split(':', 1)[1].strip())
+            with telemetry_lock:
+                if state.get('section') == 'accel': telemetry['ax'] = val
+                elif state.get('section') == 'gyro': telemetry['gx'] = val
+        except ValueError:
+            pass
+    elif line.startswith('Y:'):
+        try:
+            val = float(line.split(':', 1)[1].strip())
+            with telemetry_lock:
+                if state.get('section') == 'accel': telemetry['ay'] = val
+                elif state.get('section') == 'gyro': telemetry['gy'] = val
+        except ValueError:
+            pass
+    elif line.startswith('Z:'):
+        try:
+            val = float(line.split(':', 1)[1].strip())
+            with telemetry_lock:
+                if state.get('section') == 'accel': telemetry['az'] = val
+                elif state.get('section') == 'gyro': telemetry['gz'] = val
+        except ValueError:
+            pass
+    elif line.startswith('ROLL:'):
+        try:
+            r = float(line.split(':', 1)[1].replace('degrees', '').replace('deg', '').strip())
+            with telemetry_lock:
+                if abs(r) > 0.01:
+                    telemetry['roll'] = r
+        except ValueError:
+            pass
+    elif line.startswith('PITCH:'):
+        try:
+            p = float(line.split(':', 1)[1].replace('degrees', '').replace('deg', '').strip())
+            with telemetry_lock:
+                if abs(p) > 0.01:
+                    telemetry['pitch'] = p
+        except ValueError:
+            pass
+    elif line.startswith('TEMPERATURE:'):
+        try:
+            val = float(line.split(':', 1)[1].replace('C', '').strip())
+            with telemetry_lock:
+                telemetry['temp'] = val
+        except ValueError:
+            pass
+    elif 'GPS BYTES:' in line or 'GPS RAW BYTES:' in line:
+        try:
+            val = int(line.split(':', 1)[1].strip())
+            with telemetry_lock:
+                telemetry['gps_bytes'] = val
+        except ValueError:
+            pass
+    elif line.startswith('SATELLITES:'):
+        val_str = line.split(':', 1)[1].strip()
+        try:
+            sats = int(val_str)
+            with telemetry_lock:
+                telemetry['sats'] = sats
+        except ValueError:
+            pass
+    elif line.startswith('LATITUDE:') or line.startswith('LAT:'):
+        try:
+            val = float(line.split(':', 1)[1].strip())
+            with telemetry_lock:
+                telemetry['lat'] = val
+        except ValueError:
+            pass
+    elif line.startswith('LONGITUDE:') or line.startswith('LNG:'):
+        try:
+            val = float(line.split(':', 1)[1].strip())
+            with telemetry_lock:
+                telemetry['lng'] = val
+        except ValueError:
+            pass
+    elif line.startswith('ALTITUDE:'):
+        try:
+            val = float(line.split(':', 1)[1].replace('m', '').strip())
+            with telemetry_lock:
+                telemetry['altitude'] = val
+        except ValueError:
+            pass
+    elif line.startswith('SPEED:'):
+        try:
+            val = float(line.split(':', 1)[1].replace('km/h', '').strip())
+            with telemetry_lock:
+                telemetry['speed'] = val
+        except ValueError:
+            pass
 
-            if telemetry["fall_alert"]:
-                telemetry["events"].append({
-                    "time": telemetry["last_update"],
-                    "text": f"⚠️ FALL ALERT at {telemetry['lat']}, {telemetry['lng']}"
-                })
-                if len(telemetry["events"]) > 20:
-                    telemetry["events"].pop(0)
-        return True
-    return False
+    # Post-process calculated fields
+    with telemetry_lock:
+        telemetry['last_update'] = datetime.now().strftime("%H:%M:%S")
+        telemetry['bridge_connected'] = True
 
-# Register Bridge callback for pushed updates
-if HAS_BRIDGE and BridgeObj:
-    try:
-        def on_telemetry(data):
-            parse_telemetry_packet(str(data))
+        # Calculate live pitch and roll from accelerometer vectors if IMU is working
+        if telemetry['imu_ok'] and (telemetry['roll'] == 0.0 and telemetry['pitch'] == 0.0):
+            ax, ay, az = telemetry['ax'], telemetry['ay'], telemetry['az']
+            if abs(ax) > 0.001 or abs(ay) > 0.001 or abs(az) > 0.001:
+                telemetry['roll'] = round(math.atan2(ay, az) * 180.0 / math.pi, 1)
+                telemetry['pitch'] = round(math.atan2(-ax, math.sqrt(ay * ay + az * az)) * 180.0 / math.pi, 1)
 
-        if hasattr(BridgeObj, 'provide'):
-            BridgeObj.provide("on_telemetry", on_telemetry)
-    except Exception as e:
-        pass
+        # Fall detection
+        is_fall = update_fall_detection(telemetry['ax'], telemetry['ay'], telemetry['az'])
+        if is_fall and not telemetry['fall_alert']:
+            telemetry['fall_alert'] = True
+            telemetry['events'].append({
+                "time": telemetry['last_update'],
+                "text": f"⚠️ FALL DETECTED at Lat: {telemetry['lat']:.5f}, Lng: {telemetry['lng']:.5f}"
+            })
+            if len(telemetry['events']) > 20:
+                telemetry['events'].pop(0)
+        elif not is_fall:
+            telemetry['fall_alert'] = False
 
-# Active Telemetry Polling Thread with Auto-Reconnect
-def telemetry_worker():
+def monitor_stream_worker():
+    """Background thread that reads telemetry from 'arduino-app-cli monitor'"""
+    state = {'section': ''}
     last_print = 0
-    consecutive_fails = 0
 
     while True:
-        b = BridgeObj
-        if b is None or consecutive_fails > 5:
-            b = connect_bridge(timeout=1)
-            consecutive_fails = 0
+        try:
+            print("[SURDAS] Connecting to MCU serial monitor via arduino-app-cli...", flush=True)
+            proc = subprocess.Popen(
+                ['arduino-app-cli', 'monitor'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
 
-        if b is not None:
-            try:
-                # Query MCU for telemetry
-                raw = b.call("get_telemetry")
-                if raw is not None:
-                    parse_telemetry_packet(str(raw))
-                    consecutive_fails = 0
-                else:
-                    consecutive_fails += 1
-            except Exception as e:
-                consecutive_fails += 1
-                # Try reconnecting if disconnected
-                if "Not connected" in str(e) or "send failed" in str(e):
-                    try:
-                        if hasattr(b, 'connect'):
-                            b.connect(timeout=2)
-                    except Exception:
-                        pass
+            for line in proc.stdout:
+                parse_line(line, state)
 
-        # Print console status every second
-        if time.time() - last_print >= 1.0:
-            last_print = time.time()
-            with telemetry_lock:
-                t = telemetry.copy()
+                # Periodic terminal status print
+                if time.time() - last_print >= 1.0:
+                    last_print = time.time()
+                    with telemetry_lock:
+                        t = telemetry.copy()
 
-            gps_desc = f"{t['lat']:.5f}, {t['lng']:.5f} ({t['sats']} Sats)" if (t['lat'] != 0.0) else f"Searching ({t['sats']} Sats, {t['gps_bytes']} bytes rx)"
-            imu_desc = "OK" if t['imu_ok'] else f"OFF [{t.get('imu_status_msg', 'NO I2C')}]"
-            print(f"[SURDAS] Bridge: {'CONNECTED' if t['bridge_connected'] else 'CONNECTING...'} | "
-                  f"IMU: {imu_desc} (P:{t['pitch']}°, R:{t['roll']}°) | "
-                  f"GPS: {gps_desc}")
+                    gps_str = f"{t['lat']:.5f}, {t['lng']:.5f} ({t['sats']} Sats, {t['speed']:.1f} km/h)" if t['lat'] != 0.0 else f"Searching ({t['sats']} Sats, {t['gps_bytes']} bytes rx)"
+                    imu_str = f"OK (P:{t['pitch']:.1f}°, R:{t['roll']:.1f}°)" if t['imu_ok'] else "OFF"
+                    print(f"[SURDAS] Monitor: STREAMING | IMU: {imu_str} | GPS: {gps_str}", flush=True)
 
-        time.sleep(0.15)
+            proc.wait()
+        except FileNotFoundError:
+            print("[SURDAS] 'arduino-app-cli' not found in PATH, trying fallback...", flush=True)
+            time.sleep(3)
+        except Exception as e:
+            print(f"[SURDAS] Monitor stream error: {e}, reconnecting in 2s...", flush=True)
+            time.sleep(2)
 
-t = threading.Thread(target=telemetry_worker, daemon=True)
-t.start()
+# Start serial stream worker
+worker_thread = threading.Thread(target=monitor_stream_worker, daemon=True)
+worker_thread.start()
 
 # Flask API Endpoints
 @app.route('/')
@@ -175,7 +240,7 @@ def index():
     return render_template('index.html')
 
 @app.route('/api/telemetry')
-def get_telemetry():
+def get_telemetry_api():
     with telemetry_lock:
         return jsonify(telemetry)
 
@@ -187,8 +252,8 @@ def download_log():
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
-    print(f"\n==========================================================")
-    print(f"📍 SURDAS GPS + IMU Live Dashboard: http://0.0.0.0:{port}")
-    print(f"   Open in browser: http://unoq.local:{port}")
-    print(f"==========================================================\n")
+    print(f"\n==========================================================", flush=True)
+    print(f"📍 SURDAS Assistive GPS + IMU Live Dashboard: http://0.0.0.0:{port}", flush=True)
+    print(f"   Open in browser: http://unoq.local:{port} or http://192.168.29.84:{port}", flush=True)
+    print(f"==========================================================\n", flush=True)
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
