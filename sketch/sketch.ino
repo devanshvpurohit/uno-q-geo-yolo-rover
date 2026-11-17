@@ -1,3 +1,4 @@
+#include <Arduino_RouterBridge.h>
 #include <Wire.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
@@ -25,53 +26,17 @@ const int ENB = 10; // PWM Right
 
 const int DEFAULT_SPEED = 190;
 
-unsigned long lastTelemetryTime = 0;
-const unsigned long TELEMETRY_INTERVAL = 200; // 5Hz stream
+String currentTelemetry = "$TEL,0.0,0.0,0.0,0.0,0.0,0.0";
+unsigned long lastTelemetryUpdate = 0;
 
-void setup() {
-  // Serial link to Qualcomm Linux MPU
-  Serial.begin(115200);
-  gpsSerial.begin(9600);
-
-  // Motor Driver pin setup
-  pinMode(ENA, OUTPUT);
-  pinMode(IN1, OUTPUT);
-  pinMode(IN2, OUTPUT);
-  pinMode(IN3, OUTPUT);
-  pinMode(IN4, OUTPUT);
-  pinMode(ENB, OUTPUT);
-  stopMotors();
-
-  // Initialize I2C IMU
-  Wire.begin();
-  if (mpu.begin()) {
-    imuAvailable = true;
-    mpu.setAccelerometerRange(MPU6050_RANGE_4_G);
-    mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
-  }
+// Motor control implementation
+void stopMotors() {
+  digitalWrite(IN1, LOW); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, LOW);
+  analogWrite(ENA, 0); analogWrite(ENB, 0);
 }
 
-void loop() {
-  // 1. Ingest GPS NMEA sentences
-  while (gpsSerial.available() > 0) {
-    gps.encode(gpsSerial.read());
-  }
-
-  // 2. Read incoming commands from Qualcomm Linux MPU
-  if (Serial.available() > 0) {
-    char cmd = Serial.read();
-    handleCommand(cmd);
-  }
-
-  // 3. Emit structured telemetry packet
-  if (millis() - lastTelemetryTime >= TELEMETRY_INTERVAL) {
-    lastTelemetryTime = millis();
-    sendTelemetry();
-  }
-}
-
-void handleCommand(char cmd) {
+void executeCommand(char cmd) {
   switch (cmd) {
     case 'F': // Forward
       digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
@@ -85,13 +50,13 @@ void handleCommand(char cmd) {
       analogWrite(ENA, DEFAULT_SPEED); analogWrite(ENB, DEFAULT_SPEED);
       break;
 
-    case 'L': // Turn Left (counter-clockwise)
+    case 'L': // Spin Left
       digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH);
       digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
       analogWrite(ENA, DEFAULT_SPEED); analogWrite(ENB, DEFAULT_SPEED);
       break;
 
-    case 'R': // Turn Right (clockwise)
+    case 'R': // Spin Right
       digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
       digitalWrite(IN3, LOW); digitalWrite(IN4, HIGH);
       analogWrite(ENA, DEFAULT_SPEED); analogWrite(ENB, DEFAULT_SPEED);
@@ -104,36 +69,71 @@ void handleCommand(char cmd) {
   }
 }
 
-void stopMotors() {
-  digitalWrite(IN1, LOW); digitalWrite(IN2, LOW);
-  digitalWrite(IN3, LOW); digitalWrite(IN4, LOW);
-  analogWrite(ENA, 0); analogWrite(ENB, 0);
+// RPC functions exposed to Python via Arduino Router Bridge
+bool drive_motor(String cmd) {
+  if (cmd.length() > 0) {
+    executeCommand(cmd.charAt(0));
+  }
+  return true;
 }
 
-void sendTelemetry() {
-  sensors_event_t a, g, temp;
-  if (imuAvailable) {
-    mpu.getEvent(&a, &g, &temp);
-  } else {
-    a.acceleration.x = 0; a.acceleration.y = 0; a.acceleration.z = 0;
-    g.gyro.x = 0; g.gyro.y = 0; g.gyro.z = 0;
+String get_telemetry() {
+  return currentTelemetry;
+}
+
+void setup() {
+  // Setup Motor Driver pins
+  pinMode(ENA, OUTPUT);
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
+  pinMode(ENB, OUTPUT);
+  stopMotors();
+
+  // Initialize GPS SoftwareSerial
+  gpsSerial.begin(9600);
+
+  // Initialize I2C IMU
+  Wire.begin();
+  if (mpu.begin()) {
+    imuAvailable = true;
+    mpu.setAccelerometerRange(MPU6050_RANGE_4_G);
+    mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
   }
 
-  // CSV format: $TEL,lat,lng,speed_kmh,pitch_ax,roll_ay,yaw_gz
-  Serial.print("$TEL,");
-  if (gps.location.isValid()) {
-    Serial.print(gps.location.lat(), 6);
-    Serial.print(",");
-    Serial.print(gps.location.lng(), 6);
-    Serial.print(",");
-    Serial.print(gps.speed.kmph(), 1);
-  } else {
-    Serial.print("0.0,0.0,0.0");
+  // Initialize Router Bridge to Linux Qualcomm MPU
+  Bridge.begin();
+  Bridge.provide("drive_motor", drive_motor);
+  Bridge.provide("get_telemetry", get_telemetry);
+}
+
+void loop() {
+  // 1. Ingest GPS data from module
+  while (gpsSerial.available() > 0) {
+    gps.encode(gpsSerial.read());
   }
-  Serial.print(",");
-  Serial.print(a.acceleration.x, 2);
-  Serial.print(",");
-  Serial.print(a.acceleration.y, 2);
-  Serial.print(",");
-  Serial.println(g.gyro.z, 2);
+
+  // 2. Periodically update telemetry cache
+  if (millis() - lastTelemetryUpdate >= 100) { // 10Hz internal refresh
+    lastTelemetryUpdate = millis();
+
+    sensors_event_t a, g, temp;
+    if (imuAvailable) {
+      mpu.getEvent(&a, &g, &temp);
+    } else {
+      a.acceleration.x = 0; a.acceleration.y = 0; a.acceleration.z = 0;
+      g.gyro.x = 0; g.gyro.y = 0; g.gyro.z = 0;
+    }
+
+    String tel = "$TEL,";
+    if (gps.location.isValid()) {
+      tel += String(gps.location.lat(), 6) + "," + String(gps.location.lng(), 6) + "," + String(gps.speed.kmph(), 1);
+    } else {
+      tel += "0.0,0.0,0.0";
+    }
+    tel += "," + String(a.acceleration.x, 2) + "," + String(a.acceleration.y, 2) + "," + String(g.gyro.z, 2);
+    currentTelemetry = tel;
+  }
 }

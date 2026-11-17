@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
 """
 Standalone Autonomous Geo-Aware YOLO Vision Rover for Arduino UNO Q (4GB)
-Works completely without any external app or App Lab:
- - Direct headless execution or background systemd service
+Communicates with the STM32 MCU via the native Arduino Router Bridge (RPC),
+completely removing dependency on legacy hardware serial ports:
+ - Native Bridge RPC calls: drive_motor() and get_telemetry()
  - Embedded Flask web server (Camera stream + Telemetry HUD + Manual/Auto Controls)
- - Live YOLOv8 inference directly on Qualcomm MPU
- - Sensor telemetry ingestion (GPS + IMU) from STM32 MCU
+ - Live YOLOv8 inference directly on Qualcomm MPU (Debian 13)
  - Geo-tagged CSV event logging
 """
 
 import cv2
 import csv
-import glob
 import os
 import sys
 import time
-import serial
 import threading
 from datetime import datetime
 from flask import Flask, render_template, Response, jsonify, request, send_file
@@ -24,25 +22,28 @@ from ultralytics import YOLO
 # Initialize Flask app
 app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), 'templates'))
 
-# Serial bridge to STM32 MCU
-possible_ports = (
-    glob.glob('/dev/ttyRPMSG*') +
-    glob.glob('/dev/ttyACM*') +
-    glob.glob('/dev/ttyUSB*') +
-    ['/dev/ttyS0']
-)
-serial_port = possible_ports[0] if possible_ports else '/dev/ttyS0'
+# Connect to the Arduino Router Bridge
+bridge = None
+HAS_BRIDGE = False
 
-print(f"[UNO Q] Connecting to MCU via port: {serial_port}...")
 try:
-    mcu_serial = serial.Serial(serial_port, 115200, timeout=0.1)
-    time.sleep(1.0)
-    print(f"[UNO Q] Connected to STM32 MCU.")
-except Exception as err:
-    print(f"[UNO Q] Notice: Serial connection failed ({err}). Running in simulated hardware mode.")
-    mcu_serial = None
+    try:
+        from arduino.router_bridge import Bridge
+    except ImportError:
+        from arduino_router import Bridge
 
-# Global state
+    print("[UNO Q] Connecting to Arduino Router daemon via RPC...")
+    bridge = Bridge()
+    if hasattr(bridge, 'connect'):
+        bridge.connect(timeout=5)
+    HAS_BRIDGE = True
+    print("[UNO Q] Successfully connected to Arduino Router Bridge!")
+except Exception as err:
+    print(f"[UNO Q] Bridge connection notice: {err}. Operating in standalone/simulation mode.")
+    bridge = None
+    HAS_BRIDGE = False
+
+# Global telemetry cache
 telemetry = {
     "lat": 0.0,
     "lng": 0.0,
@@ -90,35 +91,39 @@ def log_event(cls_name, conf, action):
     except Exception as e:
         print(f"[LOG ERROR] {e}")
 
-def telemetry_listener():
-    global telemetry
-    while mcu_serial and mcu_serial.is_open:
-        try:
-            line = mcu_serial.readline().decode('utf-8', errors='ignore').strip()
-            if line.startswith("$TEL"):
-                parts = line.split(',')
-                if len(parts) >= 7:
-                    with telemetry_lock:
-                        telemetry["lat"] = float(parts[1])
-                        telemetry["lng"] = float(parts[2])
-                        telemetry["speed"] = float(parts[3])
-                        telemetry["ax"] = float(parts[4])
-                        telemetry["ay"] = float(parts[5])
-                        telemetry["gz"] = float(parts[6])
-        except Exception:
-            pass
-
-t = threading.Thread(target=telemetry_listener, daemon=True)
-t.start()
-
 def send_command(cmd):
     with telemetry_lock:
         telemetry["current_action"] = cmd
-    if mcu_serial and mcu_serial.is_open:
+
+    if HAS_BRIDGE and bridge:
         try:
-            mcu_serial.write(cmd.encode())
+            bridge.call("drive_motor", cmd)
         except Exception as e:
-            print(f"[SERIAL SEND ERROR] {e}")
+            # Non-blocking RPC error logging
+            pass
+
+def telemetry_poller():
+    global telemetry
+    while True:
+        if HAS_BRIDGE and bridge:
+            try:
+                raw_tel = bridge.call("get_telemetry")
+                if raw_tel and isinstance(raw_tel, str) and raw_tel.startswith("$TEL"):
+                    parts = raw_tel.split(',')
+                    if len(parts) >= 7:
+                        with telemetry_lock:
+                            telemetry["lat"] = float(parts[1])
+                            telemetry["lng"] = float(parts[2])
+                            telemetry["speed"] = float(parts[3])
+                            telemetry["ax"] = float(parts[4])
+                            telemetry["ay"] = float(parts[5])
+                            telemetry["gz"] = float(parts[6])
+            except Exception:
+                pass
+        time.sleep(0.2)  # 5Hz polling
+
+t = threading.Thread(target=telemetry_poller, daemon=True)
+t.start()
 
 # Web Endpoints
 @app.route('/')
@@ -175,12 +180,12 @@ def video_feed():
 # Vision Inference Engine
 def vision_worker():
     global current_frame
-    print("[UNO Q] Loading YOLOv8n weights...")
+    print("[UNO Q] Initializing YOLOv8n model...")
     model = YOLO("yolov8n.pt")
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
-        print("[UNO Q] Primary camera not found, trying index 1...")
+        print("[UNO Q] Camera index 0 not found. Attempting index 1...")
         cap = cv2.VideoCapture(1)
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
@@ -254,14 +259,12 @@ def vision_worker():
         cap.release()
 
 if __name__ == '__main__':
-    # Launch vision worker thread
     vision_thread = threading.Thread(target=vision_worker, daemon=True)
     vision_thread.start()
 
-    # Launch Flask on all network interfaces
     port = int(os.environ.get("PORT", 5000))
     print(f"\n==========================================================")
-    print(f"🚀 UNO Q Rover Web Dashboard live on: http://0.0.0.0:{port}")
+    print(f"🚀 UNO Q Rover Web Dashboard: http://0.0.0.0:{port}")
     print(f"   Open on your phone or PC: http://unoq.local:{port}")
     print(f"==========================================================\n")
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
