@@ -19,21 +19,22 @@ HAS_BRIDGE = False
 
 # Try importing the official Arduino UNO Q Bridge
 try:
-    from arduino.app_utils import Bridge
-    BridgeObj = Bridge
+    from arduino.router_bridge import Bridge
+    b_inst = Bridge()
+    if hasattr(b_inst, 'connect'):
+        b_inst.connect(timeout=5)
+    BridgeObj = b_inst
     HAS_BRIDGE = True
-    print("[SURDAS] Initialized Bridge using 'arduino.app_utils.Bridge'")
-except ImportError:
+    print("[SURDAS] Successfully connected via 'arduino.router_bridge.Bridge'!")
+except Exception as e1:
     try:
-        from arduino.router_bridge import Bridge
-        b_inst = Bridge()
-        if hasattr(b_inst, 'connect'):
-            b_inst.connect(timeout=5)
-        BridgeObj = b_inst
+        from arduino.app_utils import Bridge
+        BridgeObj = Bridge
         HAS_BRIDGE = True
-        print("[SURDAS] Initialized Bridge using 'arduino.router_bridge.Bridge'")
-    except Exception as e:
-        print(f"[SURDAS] Notice: Could not connect to Arduino Router ({e}). Operating in simulation mode.")
+        print("[SURDAS] Successfully connected via 'arduino.app_utils.Bridge'!")
+    except Exception as e2:
+        print(f"[SURDAS] Notice: Could not connect to Arduino Router ({e1} / {e2}).")
+        print("[SURDAS] Run: .venv/bin/pip install arduino-router-bridge")
         HAS_BRIDGE = False
 
 # Shared Telemetry State
