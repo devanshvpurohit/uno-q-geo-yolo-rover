@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Automated Setup for Arduino UNO Q (4GB) Debian Linux environment
-# Handles Debian 13 PEP 668 and configures Python 3.13 / ARM64 environment
+# Fast Setup for Arduino UNO Q (4GB) - GPS + IMU Platform
+# Clean, lightweight, and completes in seconds
 
 set -e
 
@@ -8,47 +8,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo "=========================================================="
-echo "  Setting up Standalone Geo-YOLO on Arduino UNO Q (4GB)   "
+echo "  Setting up SURDAS GPS + IMU Platform on Arduino UNO Q   "
 echo "=========================================================="
 
-echo "[1/4] Updating Debian repositories..."
+echo "[1/3] Updating apt and installing core tools..."
 sudo apt-get update -y
-
-echo "[2/4] Installing system dependencies (Python, OpenCV, Serial, Flask, V4L)..."
 sudo apt-get install -y \
     python3-pip \
-    python3-opencv \
-    python3-serial \
     python3-flask \
-    python3-numpy \
     python3-venv \
-    v4l-utils \
-    git \
-    curl
+    curl \
+    git
 
-echo "[3/4] Configuring Python environment for Debian 13 (ARM64)..."
+echo "[2/3] Configuring Python environment..."
 if [ ! -d ".venv" ]; then
-    echo "Creating virtual environment (.venv) with system-site-packages..."
+    echo "Creating virtual environment (.venv)..."
     python3 -m venv --system-site-packages .venv
 fi
 
-echo "Upgrading pip & setuptools..."
-.venv/bin/pip install --upgrade pip setuptools wheel
-
-# Install PyTorch CPU wheels for ARM64 if needed
-echo "Installing PyTorch & Torchvision for ARM64..."
-.venv/bin/pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu || .venv/bin/pip install torch torchvision || true
-
-echo "Installing Ultralytics & Arduino Router Bridge in .venv..."
+echo "Installing requirements (Flask, Arduino Router Bridge)..."
+.venv/bin/pip install --upgrade pip
 .venv/bin/pip install -r python/requirements.txt
 
-# Ensure permissions
+# Ensure executable scripts
 chmod +x setup.sh run.sh flash_mcu.sh
-
-echo "[4/4] Pre-caching YOLOv8 Nano weights..."
-if [ ! -f "yolov8n.pt" ]; then
-    .venv/bin/python3 -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" || echo "Weights will be downloaded on first launch."
-fi
 
 # Optional: setup systemd auto-start
 if [ "$1" == "--enable-autostart" ]; then
@@ -56,13 +39,13 @@ if [ "$1" == "--enable-autostart" ]; then
     sudo cp uno-q-rover.service /etc/systemd/system/
     sudo systemctl daemon-reload
     sudo systemctl enable uno-q-rover.service
-    echo "Auto-start enabled! The rover will launch automatically on boot."
+    echo "Auto-start enabled! Will launch automatically on boot."
 fi
 
 echo "=========================================================="
 echo "  Setup Completed Successfully!                           "
 echo "                                                          "
-echo "  To launch the rover now, run:                           "
+echo "  To launch:                                              "
 echo "    ./run.sh                                              "
 echo "                                                          "
 echo "  Web Dashboard will be live at:                          "
