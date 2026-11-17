@@ -323,9 +323,9 @@
             fetch('/api/telemetry')
                 .then(r => r.json())
                 .then(data => {
-                    // Update synchronous lockstep FPS
+                    // Update real-time 15 FPS badge
                     if (data.fps_cam !== undefined) {
-                        document.getElementById('fpsBadge').innerText = `AI & CAM: ${data.fps_cam} FPS (SYNC)`;
+                        document.getElementById('fpsBadge').innerText = `AI & CAM: ${data.fps_cam} FPS (REAL-TIME)`;
                     }
 
                     // Update AI Guidance text
