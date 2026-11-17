@@ -1,0 +1,7 @@
+name: uno-q-geo-yolo-rover
+version: 1.0.0
+description: "Autonomous Geo-Aware YOLO Vision Rover on Arduino UNO Q 4GB"
+author: "devanshvpurohit"
+entrypoints:
+  mcu: sketch/sketch.ino
+  linux: python/main.py

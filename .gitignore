@@ -1,0 +1,11 @@
+# Uno Q Geo YOLO Rover
+
+*.pt
+__pycache__/
+*.pyc
+.build/
+*.bin
+*.elf
+*.csv
+.DS_Store
+.venv/
