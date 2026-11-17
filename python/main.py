@@ -10,6 +10,7 @@ import csv
 import json
 import math
 import os
+import pty
 import re
 import subprocess
 import sys
@@ -202,23 +203,33 @@ def parse_line(line, state):
             telemetry['fall_alert'] = False
 
 def monitor_stream_worker():
-    """Background thread that reads telemetry from 'arduino-app-cli monitor'"""
+    """Background thread that reads telemetry from 'arduino-app-cli monitor' via a PTY"""
     state = {'section': ''}
     last_print = 0
 
     while True:
+        master = None
+        slave = None
+        proc = None
+        master_file = None
         try:
-            print("[SURDAS] Connecting to MCU serial monitor via arduino-app-cli...", flush=True)
+            # PTY is required because arduino-app-cli monitor requires a TTY to stream output
+            master, slave = pty.openpty()
             proc = subprocess.Popen(
-                ['stdbuf', '-oL', '-eL', 'arduino-app-cli', 'monitor'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1
+                ['arduino-app-cli', 'monitor'],
+                stdin=slave,
+                stdout=slave,
+                stderr=slave,
+                close_fds=True
             )
+            os.close(slave)
+            slave = None
+
+            master_file = open(master, 'r', encoding='utf-8', errors='ignore')
+            print("[SURDAS] Connected to MCU serial monitor via PTY.", flush=True)
 
             while proc.poll() is None:
-                line = proc.stdout.readline()
+                line = master_file.readline()
                 if not line:
                     break
                 parse_line(line, state)
@@ -242,6 +253,19 @@ def monitor_stream_worker():
         except Exception as e:
             print(f"[SURDAS] Monitor stream error: {e}, reconnecting in 2s...", flush=True)
             time.sleep(2)
+        finally:
+            if slave is not None:
+                try: os.close(slave)
+                except Exception: pass
+            if master_file is not None:
+                try: master_file.close()
+                except Exception: pass
+            elif master is not None:
+                try: os.close(master)
+                except Exception: pass
+            if proc is not None and proc.poll() is None:
+                try: proc.terminate()
+                except Exception: pass
 
 # Start serial stream worker
 worker_thread = threading.Thread(target=monitor_stream_worker, daemon=True)
