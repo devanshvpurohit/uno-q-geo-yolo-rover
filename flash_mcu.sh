@@ -24,10 +24,8 @@ if ! arduino-cli core list | grep -q "arduino:zephyr"; then
     arduino-cli core install arduino:zephyr
 fi
 
-# 4. Install required Arduino libraries for sensors
-echo "Installing sensor libraries..."
-arduino-cli lib install "Adafruit MPU6050" || true
-arduino-cli lib install "Adafruit Unified Sensor" || true
+# 4. Install TinyGPSPlus library
+echo "Ensuring TinyGPSPlus library is installed..."
 arduino-cli lib install "TinyGPSPlus" || true
 
 # 5. Compile using official FQBN: arduino:zephyr:unoq
