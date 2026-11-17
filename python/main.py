@@ -3,7 +3,7 @@
 SURDAS: Real-Time Assistive Vision, Spatial AI & Telemetry Engine for Arduino UNO Q (4GB)
 - Hardware Telemetry: GPS (NEO-6M), IMU (MPU-6050, fall detection) via native monitor stream
 - Vision & Spatial AI: YOLOv8n object detection + MiDaS depth estimation via ONNX Runtime
-- Hands-Free Speech Guidance: Natural spatial announcements for visually impaired navigation
+- Threaded WSGI server ensures zero blocking between video stream and telemetry API
 """
 
 import csv
@@ -58,11 +58,10 @@ LOG_FILE = os.path.join(os.path.dirname(__file__), "..", "telemetry_log.csv")
 if not os.path.exists(LOG_FILE):
     with open(LOG_FILE, mode='w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(["Timestamp", "Lat", "Lng", "Sats", "Speed_kmh", "Alt_m", "Pitch", "Roll", "Ax", "Ay", "Az", "Fall_Alert", "Guidance"])
+        writer.writerow(["Timestamp", "Lat", "Lng", "Sats", "Speed_kmh", "Alt_m", "Pitch", "Roll", "Ax", "Ay", "Az", "Fall_Alert"])
 
 def update_fall_detection(ax, ay, az):
     total_g = math.sqrt(ax * ax + ay * ay + az * az)
-    # Severe impact (> 2.8g) or freefall (< 0.25g)
     return (total_g > 2.8 or (0.02 < total_g < 0.25))
 
 def parse_line(line, state):
@@ -182,8 +181,8 @@ def parse_line(line, state):
         telemetry['last_update'] = datetime.now().strftime("%H:%M:%S")
         telemetry['bridge_connected'] = True
 
-        # Calculate live pitch and roll from accelerometer vectors if IMU is working
-        if telemetry['imu_ok'] and (telemetry['roll'] == 0.0 and telemetry['pitch'] == 0.0):
+        # Compute dynamic pitch/roll from accelerometer if angles are default
+        if telemetry['imu_ok']:
             ax, ay, az = telemetry['ax'], telemetry['ay'], telemetry['az']
             if abs(ax) > 0.001 or abs(ay) > 0.001 or abs(az) > 0.001:
                 telemetry['roll'] = round(math.atan2(ay, az) * 180.0 / math.pi, 1)
@@ -224,11 +223,9 @@ def monitor_stream_worker():
                     break
                 parse_line(line, state)
 
-                # Periodic terminal status print
                 if time.time() - last_print >= 1.0:
                     last_print = time.time()
                     with telemetry_lock:
-                        # Pull live AI guidance
                         telemetry['ai_guidance'] = ai_engine.latest_guidance
                         telemetry['detected_objects'] = [d["class"] for d in ai_engine.latest_detections]
                         telemetry['spatial_sectors'] = ai_engine.spatial_sectors
@@ -236,7 +233,7 @@ def monitor_stream_worker():
 
                     gps_str = f"{t['lat']:.5f}, {t['lng']:.5f} ({t['sats']} Sats, {t['speed']:.1f} km/h)" if t['lat'] != 0.0 else f"Searching ({t['sats']} Sats, {t['gps_bytes']} bytes rx)"
                     imu_str = f"OK (P:{t['pitch']:.1f}°, R:{t['roll']:.1f}°)" if t['imu_ok'] else "OFF"
-                    print(f"[SURDAS] IMU: {imu_str} | GPS: {gps_str} | AI: {t['ai_guidance'][:45]}", flush=True)
+                    print(f"[SURDAS] IMU: {imu_str} | GPS: {gps_str} | AI: {t['ai_guidance'][:40]}", flush=True)
 
             proc.wait()
         except FileNotFoundError:
@@ -257,11 +254,12 @@ def index():
 
 @app.route('/video_feed')
 def video_feed():
-    """Live video stream with YOLO detections & MiDaS depth heatmap overlay"""
+    """Live video stream with YOLO detections & MiDaS depth overlay"""
     return Response(ai_engine.get_jpeg_stream(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/api/telemetry')
 def get_telemetry_api():
+    """Instant JSON response: never blocked by video feed"""
     with telemetry_lock:
         telemetry['ai_guidance'] = ai_engine.latest_guidance
         telemetry['detected_objects'] = [d["class"] for d in ai_engine.latest_detections]
@@ -280,4 +278,5 @@ if __name__ == '__main__':
     print(f"📍 SURDAS Assistive AI Prototype Live: http://0.0.0.0:{port}", flush=True)
     print(f"   Open in browser: http://unoq.local:{port} or http://192.168.29.84:{port}", flush=True)
     print(f"==========================================================\n", flush=True)
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    # threaded=True is CRITICAL: ensures video stream doesn't block telemetry API
+    app.run(host='0.0.0.0', port=port, threaded=True, debug=False, use_reloader=False)
