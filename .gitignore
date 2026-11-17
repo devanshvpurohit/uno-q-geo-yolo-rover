@@ -1,6 +1,8 @@
 # Uno Q Geo YOLO Rover
 
 *.pt
+*.onnx
+models/
 __pycache__/
 *.pyc
 .build/
