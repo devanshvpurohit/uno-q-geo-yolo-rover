@@ -201,7 +201,7 @@ def monitor_stream_worker():
         try:
             print("[SURDAS] Connecting to MCU serial monitor via arduino-app-cli...", flush=True)
             proc = subprocess.Popen(
-                ['arduino-app-cli', 'monitor'],
+                ['stdbuf', '-oL', '-eL', 'arduino-app-cli', 'monitor'],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
