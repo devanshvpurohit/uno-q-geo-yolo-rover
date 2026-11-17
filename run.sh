@@ -24,12 +24,12 @@ fi
 PYTHON_CMD="$SCRIPT_DIR/.venv/bin/python3"
 PIP_CMD="$SCRIPT_DIR/.venv/bin/pip"
 
-# Check if arduino-router-bridge and flask are installed
-if ! "$PYTHON_CMD" -c "import flask; from arduino.router_bridge import Bridge" &>/dev/null; then
-    echo "Installing arduino-router-bridge & flask in .venv..."
+# Check if core dependencies are installed
+if ! "$PYTHON_CMD" -c "import flask, cv2, onnxruntime" &>/dev/null; then
+    echo "Installing requirements in .venv..."
     "$PIP_CMD" install --upgrade pip
-    "$PIP_CMD" install arduino-router-bridge flask
+    "$PIP_CMD" install -r requirements.txt
 fi
 
-echo "Starting SURDAS GPS + IMU Platform with $PYTHON_CMD..."
+echo "Starting SURDAS Assistive AI Platform with $PYTHON_CMD..."
 exec "$PYTHON_CMD" -u python/main.py
