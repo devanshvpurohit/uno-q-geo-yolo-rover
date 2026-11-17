@@ -240,6 +240,7 @@ class AIVisionEngine:
             loop_start = time.time()
 
             # 1. Grab camera frame
+            t0 = time.time()
             if self.camera is not None and self.camera.isOpened():
                 ret, frame = self.camera.read()
                 if not ret or frame is None:
@@ -252,11 +253,13 @@ class AIVisionEngine:
                 time.sleep(0.066)
 
             h, w = frame.shape[:2]
+            t1 = time.time()
 
             # 2. Feed frame to YOLO detection engine (if ready)
             with self.yolo_lock:
                 if self.raw_frame_for_ai is None:
                     self.raw_frame_for_ai = frame.copy()
+            t2 = time.time()
 
             # 3. Pull latest active detections
             with self.lock:
@@ -264,9 +267,14 @@ class AIVisionEngine:
 
             # 4. Compute 15 FPS spatial clearance & guidance
             guidance, sectors = self.compute_guidance(current_detections, frame, w, h)
+            t3 = time.time()
 
             # 5. Render live 15 FPS overlay directly on this camera frame
             annotated_frame = self.render_overlay(frame, current_detections, guidance, self.fps)
+            t4 = time.time()
+
+            if frame_count % 15 == 0:
+                print(f"[SURDAS-PERF] read:{(t1-t0)*1000:.1f}ms | yolo_buf:{(t2-t1)*1000:.1f}ms | guide:{(t3-t2)*1000:.1f}ms | render:{(t4-t3)*1000:.1f}ms", flush=True)
 
             with self.lock:
                 self.latest_frame = annotated_frame
