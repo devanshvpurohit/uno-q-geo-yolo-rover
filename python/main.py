@@ -96,6 +96,8 @@ def parse_telemetry_packet(raw):
             telemetry["fall_alert"] = (p[15] == "1")
             if len(p) >= 17:
                 telemetry["gps_bytes"] = int(p[16])
+            if len(p) >= 18:
+                telemetry["imu_status_msg"] = p[17]
             telemetry["bridge_connected"] = True
             telemetry["last_update"] = datetime.now().strftime("%H:%M:%S")
 
@@ -157,8 +159,9 @@ def telemetry_worker():
                 t = telemetry.copy()
 
             gps_desc = f"{t['lat']:.5f}, {t['lng']:.5f} ({t['sats']} Sats)" if (t['lat'] != 0.0) else f"Searching ({t['sats']} Sats, {t['gps_bytes']} bytes rx)"
+            imu_desc = "OK" if t['imu_ok'] else f"OFF [{t.get('imu_status_msg', 'NO I2C')}]"
             print(f"[SURDAS] Bridge: {'CONNECTED' if t['bridge_connected'] else 'CONNECTING...'} | "
-                  f"IMU: {'OK' if t['imu_ok'] else 'OFF'} (P:{t['pitch']}°, R:{t['roll']}°) | "
+                  f"IMU: {imu_desc} (P:{t['pitch']}°, R:{t['roll']}°) | "
                   f"GPS: {gps_desc}")
 
         time.sleep(0.15)
