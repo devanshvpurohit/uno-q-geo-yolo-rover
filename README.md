@@ -1,12 +1,28 @@
 # Arduino UNO Q (4GB) Geo-Aware YOLO Vision Rover
 
-An autonomous vision-guided robotics system built specifically for the **Arduino UNO Q (4GB)** dual-core platform. It combines real-time edge AI object detection with GPS tracking, 6-DOF IMU orientation sensing, and reactive motor control.
+An autonomous vision-guided robotics system built for the **Arduino UNO Q (4GB)**. 
+
+**Operates 100% standalone — NO Arduino App Lab or mobile app required.**
+Connect to the rover from any browser (on your phone, tablet, or PC) over Wi-Fi, or let it run autonomously on boot.
+
+---
+
+## Key Features
+
+* **No External App Needed:** The UNO Q Debian MPU runs an embedded responsive Web Dashboard on port `5000`.
+* **Real-Time Edge AI:** Direct YOLOv8 Nano inference on the 4GB Qualcomm QRB2210 core.
+* **Dual-Brain Architecture:** Qualcomm MPU handles high-level vision and web streaming; STM32 MCU handles low-latency GPS (NEO-6M), IMU (MPU-6050), and motor driving.
+* **Live Web HUD (`http://unoq.local:5000`):**
+  * Live camera stream with YOLO bounding boxes and confidence scores.
+  * Real-time GPS Latitude, Longitude, and Speed gauges.
+  * 6-DOF IMU Pitch and Roll indicators.
+  * Switch between **Autonomous YOLO Navigation** and **Manual D-Pad Controls**.
+  * One-click download for geo-tagged detection CSV logs.
+* **Auto-Start on Boot:** Includes a `systemd` service so the rover runs immediately when powered by battery.
 
 ---
 
 ## Architecture
-
-The **Arduino UNO Q** features a hybrid dual-brain architecture:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -15,17 +31,17 @@ The **Arduino UNO Q** features a hybrid dual-brain architecture:
 │                                                                 │
 │  - USB / CSI Camera Feed                                        │
 │  - YOLOv8 Nano Edge AI Inference                                │
-│  - Vision-based Steering & Obstacle Avoidance Decisions         │
+│  - Embedded Web Server (Flask + MJPEG Stream on Port 5000)      │
 │  - Geo-referenced CSV Event Logging                             │
 └────────────────────────────────┬────────────────────────────────┘
-                                 │ Internal RPC / Bridge Serial
+                                 │ Internal Bridge Serial / RPC
 ┌────────────────────────────────┴────────────────────────────────┐
 │                   STM32U585 Microcontroller (MCU)               │
 │                        Real-Time Control                        │
 │                                                                 │
-│  - NEO-6M / M8N GPS Ingestion (UART - Pins D4, D3)             │
-│  - MPU-6050 6-DOF IMU Telemetry (I2C / Qwiic - SDA/SCL)        │
-│  - Dual DC Motor Drive Actuation (PWM Pins D5, D6, D7, D8, D9, D10)│
+│  - NEO-6M / M8N GPS (Pins D4, D3 via SoftwareSerial)           │
+│  - MPU-6050 6-DOF IMU (I2C / Qwiic Pins SDA, SCL)              │
+│  - Dual DC Motor Driver (PWM Pins D5, D6, D7, D8, D9, D10)      │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -33,7 +49,7 @@ The **Arduino UNO Q** features a hybrid dual-brain architecture:
 
 ## Hardware Pinout & Wiring
 
-### 1. GPS Module (NEO-6M / NEO-M8N) $\to$ Arduino UNO Q
+### 1. GPS Module (NEO-6M / M8N) $\to$ Arduino UNO Q
 | GPS Pin | Arduino UNO Q Pin | Description |
 |---|---|---|
 | `VCC` | `5V` | Power supply |
@@ -61,60 +77,53 @@ The **Arduino UNO Q** features a hybrid dual-brain architecture:
 
 ---
 
-## Quickstart & Deployment
+## Quickstart (No App Required)
 
-### 1. Clone onto the Arduino UNO Q
-SSH into your Arduino UNO Q over Wi-Fi or USB-C:
-
+### 1. SSH into the UNO Q & Clone
 ```bash
 ssh arduino@unoq.local
-```
-
-Clone this repository:
-
-```bash
 git clone https://github.com/devanshvpurohit/uno-q-geo-yolo-rover.git
 cd uno-q-geo-yolo-rover
 ```
 
-### 2. Run the Environment Setup
-Run the automated Debian setup script to configure Python, OpenCV, and pre-cache YOLOv8n weights:
-
+### 2. Run Setup
 ```bash
-chmod +x setup.sh
+chmod +x setup.sh run.sh flash_mcu.sh
 ./setup.sh
 ```
 
-### 3. Flash the Real-Time MCU Sketch
-You can upload `sketch/sketch.ino` using **Arduino App Lab** or via the CLI:
-
+*(Optional: Enable auto-start on boot)*
 ```bash
-arduino-app-cli app start /home/arduino/uno-q-geo-yolo-rover
+./setup.sh --enable-autostart
 ```
 
-*Or via Arduino CLI directly:*
+### 3. Flash the STM32 MCU (No IDE needed)
+Flash the microcontroller core directly via CLI:
 ```bash
-arduino-cli compile --fqbn arduino:zephyr:unoq_mcu sketch
-arduino-cli upload -p /dev/ttyACM0 --fqbn arduino:zephyr:unoq_mcu sketch
+./flash_mcu.sh
 ```
 
-### 4. Launch the Vision Core
-Start the autonomous mission loop on Debian Linux:
-
+### 4. Launch Rover
 ```bash
-python3 python/main.py
+./run.sh
 ```
 
 ---
 
-## Telemetry & Logging
+## Access the Web Dashboard
 
-When an object is detected in the rover's trajectory, it calculates reactive steering vectors and records a geo-tagged detection to `geo_detections_log.csv`:
+Open any web browser on your phone, tablet, or laptop connected to the same Wi-Fi:
 
-```csv
-Timestamp,Class,Confidence,Lat,Lng,Speed_kmh,Pitch_Ax,Roll_Ay,Action
-2026-11-17T20:30:15.123456,person,0.88,28.613939,77.209021,4.2,0.12,-0.04,R
 ```
+http://unoq.local:5000
+```
+*(or `http://<UNO_Q_IP_ADDRESS>:5000`)*
+
+From this page you can:
+1. Watch the live camera feed with YOLO detection bounding boxes.
+2. Monitor real-time GPS coordinates and IMU orientation.
+3. Toggle between **Auto Mode** and **Manual D-Pad** driving.
+4. Download the `geo_detections_log.csv` file.
 
 ---
 

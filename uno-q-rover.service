@@ -1,0 +1,16 @@
+[Unit]
+Description=Arduino UNO Q 4GB Geo-Aware YOLO Vision Rover
+After=network.target
+
+[Service]
+Type=simple
+User=arduino
+WorkingDirectory=/home/arduino/uno-q-geo-yolo-rover
+ExecStart=/usr/bin/python3 /home/arduino/uno-q-geo-yolo-rover/python/main.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
