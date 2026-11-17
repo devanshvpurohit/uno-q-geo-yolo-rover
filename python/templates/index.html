@@ -67,6 +67,7 @@
                 <div class="stat-box">
                     <div class="stat-label">Satellites Tracked</div>
                     <div class="stat-val" id="gpsSats" style="color: var(--accent-yellow);">0</div>
+                    <div style="font-size: 0.7rem; color: var(--text-dim);" id="gpsRawBytes">0 bytes rx</div>
                 </div>
                 <div class="stat-box">
                     <div class="stat-label">Ground Speed</div>
@@ -159,6 +160,7 @@
                     document.getElementById('gpsSpeed').innerText = data.speed.toFixed(1);
                     document.getElementById('gpsAlt').innerText = data.altitude.toFixed(1);
                     document.getElementById('lastTime').innerText = data.last_update || '--:--:--';
+                    document.getElementById('gpsRawBytes').innerText = `${data.gps_bytes || 0} bytes rx`;
 
                     const fixBadge = document.getElementById('gpsFixBadge');
                     const fixDesc = document.getElementById('gpsFixDesc');
@@ -174,9 +176,15 @@
                         mapsBtn.style.opacity = "1.0";
                         mapsBtn.style.pointerEvents = "auto";
                     } else {
-                        fixBadge.innerText = data.sats > 0 ? `${data.sats} SATS (ACQUIRING)` : "SEARCHING SATS";
-                        fixBadge.className = "badge badge-warn";
-                        fixDesc.innerText = data.sats > 0 ? "Receiving satellite signals... Fix in progress." : "Searching. Take device near a window or outdoors.";
+                        if (data.gps_bytes > 0) {
+                            fixBadge.innerText = data.sats > 0 ? `${data.sats} SATS (LOCKING)` : "NMEA STREAMING";
+                            fixBadge.className = "badge badge-warn";
+                            fixDesc.innerText = `Receiving GPS data (${data.gps_bytes} bytes). Waiting for outdoor 3D lock...`;
+                        } else {
+                            fixBadge.innerText = "NO GPS SIGNAL";
+                            fixBadge.className = "badge badge-alert";
+                            fixDesc.innerText = "Check GPS wiring: GPS TX -> Pin 0, GPS RX -> Pin 1.";
+                        }
                         coords.innerText = "Acquiring Coordinates...";
                         mapsBtn.style.opacity = "0.4";
                         mapsBtn.style.pointerEvents = "none";

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 SURDAS: Real-Time GPS & IMU Telemetry Engine for Arduino UNO Q (4GB)
-Dedicated to GPS location tracking, 6-DOF IMU orientation, and Fall Alert.
-Lightweight, instant startup, zero compute lag.
+Optimized RPC Bridge communication with STM32 MCU
 """
 
 import csv
@@ -15,25 +14,27 @@ from flask import Flask, render_template, jsonify, send_file
 
 app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), 'templates'))
 
-# Connect to the Arduino Router Bridge
-bridge = None
+BridgeObj = None
 HAS_BRIDGE = False
 
+# Try importing the official Arduino UNO Q Bridge
 try:
+    from arduino.app_utils import Bridge
+    BridgeObj = Bridge
+    HAS_BRIDGE = True
+    print("[SURDAS] Initialized Bridge using 'arduino.app_utils.Bridge'")
+except ImportError:
     try:
         from arduino.router_bridge import Bridge
-    except ImportError:
-        from arduino_router import Bridge
-
-    bridge = Bridge()
-    if hasattr(bridge, 'connect'):
-        bridge.connect(timeout=5)
-    HAS_BRIDGE = True
-    print("[SURDAS] Connected to STM32 MCU via Arduino Router Bridge (RPC)!")
-except Exception as err:
-    print(f"[SURDAS] Router Bridge notice: {err}. Operating in simulated mode.")
-    bridge = None
-    HAS_BRIDGE = False
+        b_inst = Bridge()
+        if hasattr(b_inst, 'connect'):
+            b_inst.connect(timeout=5)
+        BridgeObj = b_inst
+        HAS_BRIDGE = True
+        print("[SURDAS] Initialized Bridge using 'arduino.router_bridge.Bridge'")
+    except Exception as e:
+        print(f"[SURDAS] Notice: Could not connect to Arduino Router ({e}). Operating in simulation mode.")
+        HAS_BRIDGE = False
 
 # Shared Telemetry State
 telemetry = {
@@ -52,6 +53,8 @@ telemetry = {
     "pitch": 0.0,
     "roll": 0.0,
     "fall_alert": False,
+    "gps_bytes": 0,
+    "bridge_connected": HAS_BRIDGE,
     "last_update": "None",
     "events": []
 }
@@ -63,82 +66,97 @@ if not os.path.exists(LOG_FILE):
         writer = csv.writer(f)
         writer.writerow(["Timestamp", "Lat", "Lng", "Sats", "Speed_kmh", "Alt_m", "Pitch", "Roll", "Ax", "Ay", "Az", "Fall_Alert"])
 
-def log_telemetry():
-    with telemetry_lock:
-        t = telemetry.copy()
-    try:
-        with open(LOG_FILE, mode='a', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                datetime.utcnow().isoformat(),
-                t["lat"], t["lng"], t["sats"], t["speed"], t["altitude"],
-                t["pitch"], t["roll"], t["ax"], t["ay"], t["az"], t["fall_alert"]
-            ])
-    except Exception:
-        pass
-
-# Background Telemetry Reader (10Hz)
-def telemetry_worker():
+def parse_telemetry_packet(raw):
     global telemetry
+    if not raw or not isinstance(raw, str) or not raw.startswith("$TEL"):
+        return False
+
+    p = raw.strip().split(',')
+    if len(p) >= 16:
+        with telemetry_lock:
+            telemetry["imu_ok"] = (p[1] == "1")
+            telemetry["lat"] = float(p[2])
+            telemetry["lng"] = float(p[3])
+            telemetry["sats"] = int(p[4])
+            telemetry["speed"] = float(p[5])
+            telemetry["altitude"] = float(p[6])
+            telemetry["ax"] = float(p[7])
+            telemetry["ay"] = float(p[8])
+            telemetry["az"] = float(p[9])
+            telemetry["gx"] = float(p[10])
+            telemetry["gy"] = float(p[11])
+            telemetry["gz"] = float(p[12])
+            telemetry["pitch"] = float(p[13])
+            telemetry["roll"] = float(p[14])
+            telemetry["fall_alert"] = (p[15] == "1")
+            if len(p) >= 17:
+                telemetry["gps_bytes"] = int(p[16])
+            telemetry["bridge_connected"] = True
+            telemetry["last_update"] = datetime.now().strftime("%H:%M:%S")
+
+            if telemetry["fall_alert"]:
+                telemetry["events"].append({
+                    "time": telemetry["last_update"],
+                    "text": f"⚠️ FALL ALERT at {telemetry['lat']}, {telemetry['lng']}"
+                })
+                if len(telemetry["events"]) > 20:
+                    telemetry["events"].pop(0)
+        return True
+    return False
+
+# Register Bridge callback for pushed updates
+if HAS_BRIDGE and BridgeObj:
+    try:
+        def on_telemetry(data):
+            parse_telemetry_packet(str(data))
+
+        if hasattr(BridgeObj, 'provide'):
+            BridgeObj.provide("on_telemetry", on_telemetry)
+    except Exception as e:
+        print(f"[SURDAS] Note on Bridge.provide: {e}")
+
+# Active Telemetry Polling Thread
+def telemetry_worker():
     last_print = 0
-    last_log = 0
+    consecutive_errors = 0
 
     while True:
-        if HAS_BRIDGE and bridge:
+        if HAS_BRIDGE and BridgeObj:
             try:
-                # Format: $TEL,imu_ok,lat,lng,sats,speed_kmh,alt_m,ax,ay,az,gx,gy,gz,pitch,roll,fall
-                raw = bridge.call("get_telemetry")
-                if raw and isinstance(raw, str) and raw.startswith("$TEL"):
-                    p = raw.split(',')
-                    if len(p) >= 16:
-                        with telemetry_lock:
-                            telemetry["imu_ok"] = (p[1] == "1")
-                            telemetry["lat"] = float(p[2])
-                            telemetry["lng"] = float(p[3])
-                            telemetry["sats"] = int(p[4])
-                            telemetry["speed"] = float(p[5])
-                            telemetry["altitude"] = float(p[6])
-                            telemetry["ax"] = float(p[7])
-                            telemetry["ay"] = float(p[8])
-                            telemetry["az"] = float(p[9])
-                            telemetry["gx"] = float(p[10])
-                            telemetry["gy"] = float(p[11])
-                            telemetry["gz"] = float(p[12])
-                            telemetry["pitch"] = float(p[13])
-                            telemetry["roll"] = float(p[14])
-                            telemetry["fall_alert"] = (p[15] == "1")
-                            telemetry["last_update"] = datetime.now().strftime("%H:%M:%S")
+                # Call MCU RPC function
+                raw = BridgeObj.call("get_telemetry")
+                if raw is not None:
+                    parsed = parse_telemetry_packet(str(raw))
+                    if parsed:
+                        consecutive_errors = 0
+                else:
+                    # Try secondary function name
+                    raw_sec = BridgeObj.call("get_telemetry_raw")
+                    if raw_sec is not None:
+                        parse_telemetry_packet(str(raw_sec))
 
-                            if telemetry["fall_alert"]:
-                                telemetry["events"].append({
-                                    "time": telemetry["last_update"],
-                                    "text": f"⚠️ FALL ALERT triggered at {telemetry['lat']}, {telemetry['lng']}"
-                                })
-                                if len(telemetry["events"]) > 20:
-                                    telemetry["events"].pop(0)
+            except Exception as e:
+                consecutive_errors += 1
+                if consecutive_errors == 1 or consecutive_errors % 20 == 0:
+                    print(f"[SURDAS] Bridge RPC query note: {e}")
 
-                        # Print clean summary to terminal every second
-                        if time.time() - last_print >= 1.0:
-                            last_print = time.time()
-                            gps_str = f"Lat: {p[2]}, Lng: {p[3]} ({p[4]} Sats)" if (float(p[2]) != 0.0) else f"Searching Sats ({p[4]} tracked)"
-                            print(f"[SURDAS] IMU: {'OK' if p[1]=='1' else 'OFF'} | "
-                                  f"Pitch: {p[13]}°, Roll: {p[14]}° | "
-                                  f"GPS: {gps_str} | "
-                                  f"Fall: {'⚠️ ALERT!' if p[15]=='1' else 'Normal'}")
+        # Print console status every second
+        if time.time() - last_print >= 1.0:
+            last_print = time.time()
+            with telemetry_lock:
+                t = telemetry.copy()
 
-                        # Log to CSV every 2 seconds
-                        if time.time() - last_log >= 2.0:
-                            last_log = time.time()
-                            log_telemetry()
-            except Exception:
-                pass
+            gps_desc = f"{t['lat']:.5f}, {t['lng']:.5f} ({t['sats']} Sats)" if (t['lat'] != 0.0) else f"Searching ({t['sats']} Sats, {t['gps_bytes']} raw bytes)"
+            print(f"[SURDAS] Bridge: {'CONNECTED' if t['bridge_connected'] else 'WAITING'} | "
+                  f"IMU: {'OK' if t['imu_ok'] else 'DISCONNECTED'} (P:{t['pitch']}°, R:{t['roll']}°) | "
+                  f"GPS: {gps_desc}")
 
-        time.sleep(0.1)
+        time.sleep(0.15)
 
 t = threading.Thread(target=telemetry_worker, daemon=True)
 t.start()
 
-# Web Endpoints
+# Flask API Endpoints
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -158,6 +176,6 @@ if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     print(f"\n==========================================================")
     print(f"📍 SURDAS GPS + IMU Live Dashboard: http://0.0.0.0:{port}")
-    print(f"   Open on your phone or PC: http://unoq.local:{port}")
+    print(f"   Open in browser: http://unoq.local:{port}")
     print(f"==========================================================\n")
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)

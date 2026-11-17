@@ -5,12 +5,16 @@
 #include <TinyGPSPlus.h>
 
 /*
- * SURDAS: Assistive GPS + IMU Core for Arduino UNO Q (4GB)
- * Microcontroller: STM32U585 running Zephyr RTOS
+ * SURDAS: Assistive GPS + IMU Platform for Arduino UNO Q
+ * STM32U585 Zephyr MCU Core
  *
- * Hardware Peripherals:
- * - GPS (NEO-6M / M8N): Hardware UART Serial1 (Pin 0 RX, Pin 1 TX)
- * - IMU (MPU-6050): I2C (Pins SDA, SCL / Qwiic)
+ * Pinout:
+ * - GPS (NEO-6M / M8N):
+ *     GPS TX -> Arduino Pin 0 (RX)
+ *     GPS RX -> Arduino Pin 1 (TX)
+ * - IMU (MPU-6050):
+ *     SDA -> Arduino SDA (Pin A4 / Qwiic)
+ *     SCL -> Arduino SCL (Pin A5 / Qwiic)
  */
 
 TinyGPSPlus gps;
@@ -18,76 +22,94 @@ Adafruit_MPU6050 mpu;
 
 bool imuReady = false;
 bool fallAlert = false;
-
-// Format: $TEL,imu_ok,lat,lng,sats,speed_kmh,alt_m,ax,ay,az,gx,gy,gz,pitch,roll,fall
-String currentTelemetry = "$TEL,0,0.0,0.0,0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0";
+unsigned long gpsBytesCount = 0;
 unsigned long lastUpdate = 0;
+
+// Format: $TEL,imu_ok,lat,lng,sats,speed_kmh,alt_m,ax,ay,az,gx,gy,gz,pitch,roll,fall,gps_bytes
+String currentTelemetry = "$TEL,0,0.0,0.0,0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0";
 
 String get_telemetry() {
   return currentTelemetry;
 }
 
-void setup() {
-  // Built-in status LED
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, LOW);
-
-  // Hardware UART Serial1 for GPS (9600 baud)
-  Serial1.begin(9600);
-
-  // I2C IMU (MPU6050)
-  Wire.begin();
-  if (mpu.begin()) {
-    imuReady = true;
+bool initIMU() {
+  // Try default I2C address 0x68, then secondary address 0x69
+  if (mpu.begin(0x68) || mpu.begin(0x69)) {
     mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
     mpu.setGyroRange(MPU6050_RANGE_500_DEG);
     mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
     digitalWrite(LED_BUILTIN, HIGH);
+    return true;
   }
+  return false;
+}
 
-  // Arduino Router Bridge to Qualcomm Linux MPU
+void setup() {
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, LOW);
+
+  // Initialize Hardware UART Serial1 for GPS (Pins 0/1)
+  Serial1.begin(9600);
+
+  // Initialize I2C Bus
+  Wire.begin();
+  delay(100);
+
+  // Attempt initial IMU connection
+  imuReady = initIMU();
+
+  // Initialize Router Bridge to Linux Qualcomm MPU
   Bridge.begin();
-  Bridge.provide("get_telemetry", get_telemetry);
+  Bridge.provide_safe("get_telemetry", get_telemetry);
+  Bridge.provide("get_telemetry_raw", get_telemetry);
 }
 
 void loop() {
-  // 1. Ingest GPS NMEA sentences from Hardware Serial1
+  // 1. Process GPS Characters from Hardware Serial1
   while (Serial1.available() > 0) {
-    gps.encode(Serial1.read());
+    char c = Serial1.read();
+    gpsBytesCount++;
+    gps.encode(c);
   }
 
-  // 2. Refresh Telemetry at 10Hz
+  // 2. Periodic Telemetry Update (10Hz)
   if (millis() - lastUpdate >= 100) {
     lastUpdate = millis();
 
-    sensors_event_t a, g, temp;
+    // Re-check IMU connection if not yet connected
+    if (!imuReady) {
+      imuReady = initIMU();
+    }
+
     float ax = 0, ay = 0, az = 0;
     float gx = 0, gy = 0, gz = 0;
     float pitch = 0, roll = 0;
 
     if (imuReady) {
-      mpu.getEvent(&a, &g, &temp);
-      ax = a.acceleration.x;
-      ay = a.acceleration.y;
-      az = a.acceleration.z;
-      gx = g.gyro.x;
-      gy = g.gyro.y;
-      gz = g.gyro.z;
+      sensors_event_t a, g, temp;
+      if (mpu.getEvent(&a, &g, &temp)) {
+        ax = a.acceleration.x;
+        ay = a.acceleration.y;
+        az = a.acceleration.z;
+        gx = g.gyro.x;
+        gy = g.gyro.y;
+        gz = g.gyro.z;
 
-      // Estimate pitch and roll from accelerometer (in degrees)
-      roll  = atan2(ay, az) * 180.0 / PI;
-      pitch = atan2(-ax, sqrt(ay * ay + az * az)) * 180.0 / PI;
+        // Pitch & Roll computation
+        roll  = atan2(ay, az) * 180.0 / PI;
+        pitch = atan2(-ax, sqrt(ay * ay + az * az)) * 180.0 / PI;
 
-      // Fall / impact detection (magnitude threshold)
-      float totalG = sqrt(ax * ax + ay * ay + az * az) / 9.81;
-      if (totalG > 2.8 || (totalG < 0.25 && totalG > 0.01)) {
-        fallAlert = true;
-      } else {
-        fallAlert = false;
+        // Fall detection
+        float totalG = sqrt(ax * ax + ay * ay + az * az) / 9.81;
+        if (totalG > 2.8 || (totalG < 0.25 && totalG > 0.02)) {
+          fallAlert = true;
+        } else {
+          fallAlert = false;
+        }
       }
     }
 
-    // Build payload: $TEL,imu_ok,lat,lng,sats,speed_kmh,alt_m,ax,ay,az,gx,gy,gz,pitch,roll,fall
+    // Build structured telemetry packet
     String tel = "$TEL,";
     tel += (imuReady ? "1" : "0");
     tel += ",";
@@ -112,7 +134,12 @@ void loop() {
     tel += String(pitch, 1) + "," + String(roll, 1);
     tel += ",";
     tel += (fallAlert ? "1" : "0");
+    tel += ",";
+    tel += String(gpsBytesCount);
 
     currentTelemetry = tel;
+
+    // Push notification to Linux bridge
+    Bridge.notify("on_telemetry", currentTelemetry);
   }
 }
