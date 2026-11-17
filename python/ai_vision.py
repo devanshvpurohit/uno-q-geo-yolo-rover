@@ -66,7 +66,7 @@ class AIVisionEngine:
     def load_models(self):
         opts = ort.SessionOptions()
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        opts.intra_op_num_threads = 3
+        opts.intra_op_num_threads = 2
         opts.inter_op_num_threads = 1
 
         if os.path.exists(self.yolo_path):
@@ -79,23 +79,24 @@ class AIVisionEngine:
     def init_camera(self):
         for dev in [1, 0]:
             try:
+                import subprocess
+                subprocess.run(["v4l2-ctl", "-d", f"/dev/video{dev}", "--set-parm=30"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(["v4l2-ctl", "-d", f"/dev/video{dev}", "--set-ctrl=exposure_dynamic_framerate=0"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+
+            try:
                 cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
                 if cap.isOpened():
                     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                    cap.set(cv2.CAP_PROP_FPS, 15)
+                    cap.set(cv2.CAP_PROP_FPS, 30)
                     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
-                    try:
-                        import subprocess
-                        subprocess.run(["v4l2-ctl", "-d", f"/dev/video{dev}", "--set-ctrl=exposure_dynamic_framerate=0"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    except Exception:
-                        pass
 
                     ret, frame = cap.read()
                     if ret and frame is not None:
-                        print(f"[SURDAS-AI] Logitech Camera connected on /dev/video{dev} (640x480 @ 15 FPS)", flush=True)
+                        print(f"[SURDAS-AI] Logitech Camera connected on /dev/video{dev} (640x480 @ 15 FPS target)", flush=True)
                         self.camera = cap
                         return True
                     cap.release()
