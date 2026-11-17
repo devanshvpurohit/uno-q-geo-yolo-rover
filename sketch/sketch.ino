@@ -7,28 +7,27 @@
 // DEVICE CONFIGURATION
 // =====================================================
 
-uint8_t imuAddress = 0x68; // Auto-scanned: 0x68 or 0x69
+#define IMU_ADDR       0x68
 
-#define REG_WHO_AM_I    0x75
-#define REG_PWR_MGMT_1  0x6B
-#define REG_SMPLRT_DIV  0x19
-#define REG_CONFIG      0x1A
+#define REG_WHO_AM_I   0x75
+#define REG_PWR_MGMT_1 0x6B
+#define REG_SMPLRT_DIV 0x19
+#define REG_CONFIG     0x1A
 #define REG_GYRO_CONFIG 0x1B
 #define REG_ACCEL_CONFIG 0x1C
-#define REG_ACCEL_XOUT  0x3B
-#define REG_GYRO_XOUT   0x43
+#define REG_ACCEL_XOUT 0x3B
+#define REG_GYRO_XOUT  0x43
 
-#define SERIAL_BAUD     115200
+#define GPS_BAUD       9600
+#define SERIAL_BAUD    115200
 
 TinyGPSPlus gps;
 
 // =====================================================
-// IMU & TELEMETRY VARIABLES
+// IMU VARIABLES
 // =====================================================
 
 bool imuReady = false;
-bool fallAlert = false;
-int i2cDevicesFound = 0;
 
 int32_t gyroOffsetX = 0;
 int32_t gyroOffsetY = 0;
@@ -47,21 +46,44 @@ const float GYRO_SCALE  = 131.0;   // +/- 250 deg/s
 
 unsigned long lastIMUUpdate = 0;
 unsigned long lastPrint = 0;
-unsigned long lastBridgeSync = 0;
-unsigned long lastBaudCheck = 0;
-
-// GPS Baud cycling: 9600 -> 38400 -> 115200
-const uint32_t baudRates[] = {9600, 38400, 115200};
-uint8_t currentBaudIdx = 0;
 
 const unsigned long PRINT_INTERVAL = 1000;
-const unsigned long BRIDGE_INTERVAL = 100; // 10Hz sync with Linux MPU
 
-String currentTelemetry = "$TEL,0,0.0,0.0,0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0";
+// =====================================================
+// BRIDGE TELEMETRY FUNCTION FOR LINUX MPU
+// =====================================================
 
-// RPC method exposed to Linux MPU
 String get_telemetry() {
-  return currentTelemetry;
+  String tel = "$TEL,";
+  tel += (imuReady ? "1" : "0");
+  tel += ",";
+
+  if (gps.location.isValid()) {
+    tel += String(gps.location.lat(), 6) + "," + String(gps.location.lng(), 6);
+  } else {
+    tel += "0.0,0.0";
+  }
+
+  tel += ",";
+  tel += String(gps.satellites.isValid() ? gps.satellites.value() : 0);
+  tel += ",";
+  tel += String(gps.speed.isValid() ? gps.speed.kmph() : 0.0, 1);
+  tel += ",";
+  tel += String(gps.altitude.isValid() ? gps.altitude.meters() : 0.0, 1);
+  tel += ",";
+  tel += String(ax, 3) + "," + String(ay, 3) + "," + String(az, 3);
+  tel += ",";
+  tel += String(gx, 2) + "," + String(gy, 2) + "," + String(gz, 2);
+  tel += ",";
+  tel += String(pitch, 1) + "," + String(roll, 1);
+  tel += ",";
+
+  float totalG = sqrt(ax * ax + ay * ay + az * az);
+  tel += ((totalG > 2.8 || (totalG < 0.25 && totalG > 0.02)) ? "1" : "0");
+  tel += ",";
+  tel += String(gps.charsProcessed());
+
+  return tel;
 }
 
 // =====================================================
@@ -69,26 +91,21 @@ String get_telemetry() {
 // =====================================================
 
 bool writeRegister(byte reg, byte value) {
-  Wire.beginTransmission(imuAddress);
+  Wire.beginTransmission(IMU_ADDR);
   Wire.write(reg);
   Wire.write(value);
   return Wire.endTransmission() == 0;
 }
 
 bool readRegisters(byte reg, byte *buffer, byte length) {
-  Wire.beginTransmission(imuAddress);
+  Wire.beginTransmission(IMU_ADDR);
   Wire.write(reg);
 
-  // Try repeated start, then standard stop if needed
   if (Wire.endTransmission(false) != 0) {
-    Wire.beginTransmission(imuAddress);
-    Wire.write(reg);
-    if (Wire.endTransmission(true) != 0) {
-      return false;
-    }
+    return false;
   }
 
-  byte received = Wire.requestFrom((uint8_t)imuAddress, length);
+  byte received = Wire.requestFrom((uint8_t)IMU_ADDR, length);
   if (received != length) {
     while (Wire.available()) {
       Wire.read();
@@ -99,6 +116,7 @@ bool readRegisters(byte reg, byte *buffer, byte length) {
   for (byte i = 0; i < length; i++) {
     buffer[i] = Wire.read();
   }
+
   return true;
 }
 
@@ -107,69 +125,52 @@ int16_t combineBytes(byte highByte, byte lowByte) {
 }
 
 // =====================================================
-// I2C SCANNER & IMU INITIALIZATION
+// IMU INITIALIZATION
 // =====================================================
 
-bool scanAndDetectIMU() {
-  Serial.println("\n[I2C] Scanning bus for devices...");
-  i2cDevicesFound = 0;
-  uint8_t detected = 0;
-
-  for (uint8_t addr = 1; addr < 127; addr++) {
-    Wire.beginTransmission(addr);
-    if (Wire.endTransmission() == 0) {
-      i2cDevicesFound++;
-      Serial.print("[I2C] Found device at 0x");
-      Serial.println(addr, HEX);
-      if (addr == 0x68 || addr == 0x69) {
-        detected = addr;
-      }
-    }
-  }
-
-  if (detected != 0) {
-    imuAddress = detected;
-    Serial.print("[I2C] MPU-6050 selected at address 0x");
-    Serial.println(imuAddress, HEX);
-    return true;
-  }
-
-  Serial.println("[I2C] No MPU6050 found! If using A4/A5, try dedicated SDA/SCL pins near AREF.");
-  return false;
-}
-
 bool initializeIMU() {
-  if (!scanAndDetectIMU()) {
-    return false;
-  }
-
   byte id = 0;
+  Serial.println("\nINITIALIZING IMU...");
+
   if (!readRegisters(REG_WHO_AM_I, &id, 1)) {
-    Serial.println("[IMU] WHO_AM_I read failed.");
+    Serial.println("IMU: WHO_AM_I READ FAILED");
     return false;
   }
 
-  Serial.print("[IMU] WHO_AM_I ID: 0x");
+  Serial.print("IMU WHO_AM_I: 0x");
   Serial.println(id, HEX);
+
+  if (id == 0x68) {
+    Serial.println("DEVICE IDENTIFIED: MPU6050");
+  } else if (id == 0x70) {
+    Serial.println("DEVICE IDENTIFIED: MPU6500");
+  } else {
+    Serial.println("UNKNOWN IMU DEVICE ID");
+    return false;
+  }
 
   // Wake up IMU
   if (!writeRegister(REG_PWR_MGMT_1, 0x00)) {
-    Serial.println("[IMU] Wakeup failed.");
+    Serial.println("IMU WAKEUP FAILED");
     return false;
   }
-  delay(50);
+  delay(100);
 
   // Sample rate = 100 Hz
   writeRegister(REG_SMPLRT_DIV, 0x09);
+
   // Digital low-pass filter
   writeRegister(REG_CONFIG, 0x03);
-  // Gyroscope range = +/- 250 deg/s
+
+  // Gyroscope range = +/- 250 degrees/sec
   writeRegister(REG_GYRO_CONFIG, 0x00);
+
   // Accelerometer range = +/- 2g
   writeRegister(REG_ACCEL_CONFIG, 0x00);
-  delay(50);
 
-  Serial.println("[IMU] Initialization SUCCESS!");
+  delay(100);
+
+  Serial.println("IMU INITIALIZATION SUCCESS");
   return true;
 }
 
@@ -180,10 +181,10 @@ bool initializeIMU() {
 void calibrateGyroscope() {
   Serial.println("\n================================");
   Serial.println("GYROSCOPE CALIBRATION");
-  Serial.println("KEEP THE SENSOR STILL...");
+  Serial.println("KEEP THE SENSOR COMPLETELY STILL");
   Serial.println("================================");
 
-  const int samples = 300;
+  const int samples = 1000;
   int64_t sumX = 0, sumY = 0, sumZ = 0;
   int successfulSamples = 0;
   byte data[6];
@@ -197,12 +198,13 @@ void calibrateGyroscope() {
       sumX += rawX;
       sumY += rawY;
       sumZ += rawZ;
+
       successfulSamples++;
     }
-    delay(2);
+    delay(3);
   }
 
-  if (successfulSamples < 200) {
+  if (successfulSamples < 900) {
     Serial.println("GYROSCOPE CALIBRATION FAILED");
     imuReady = false;
     return;
@@ -212,7 +214,10 @@ void calibrateGyroscope() {
   gyroOffsetY = sumY / successfulSamples;
   gyroOffsetZ = sumZ / successfulSamples;
 
-  Serial.println("CALIBRATION COMPLETE");
+  Serial.println("\nCALIBRATION COMPLETE");
+  Serial.print("GYRO OFFSET X: "); Serial.println(gyroOffsetX);
+  Serial.print("GYRO OFFSET Y: "); Serial.println(gyroOffsetY);
+  Serial.print("GYRO OFFSET Z: "); Serial.println(gyroOffsetZ);
 }
 
 // =====================================================
@@ -243,15 +248,20 @@ bool readIMU() {
   gy = (rawGY - gyroOffsetY) / GYRO_SCALE;
   gz = (rawGZ - gyroOffsetZ) / GYRO_SCALE;
 
-  // Fall / impact detection
-  float totalG = sqrt(ax * ax + ay * ay + az * az);
-  if (totalG > 2.8 || (totalG < 0.25 && totalG > 0.02)) {
-    fallAlert = true;
-  } else {
-    fallAlert = false;
-  }
-
   return true;
+}
+
+// =====================================================
+// TEMPERATURE
+// =====================================================
+
+float readIMUTemperature() {
+  byte data[2];
+  if (!readRegisters(0x41, data, 2)) {
+    return NAN;
+  }
+  int16_t rawTemp = combineBytes(data[0], data[1]);
+  return (rawTemp / 340.0) + 36.53;
 }
 
 // =====================================================
@@ -275,7 +285,7 @@ void calculateOrientation(float dt) {
 }
 
 // =====================================================
-// GPS PROCESSING & AUTO-BAUD DETECT
+// GPS PROCESSING
 // =====================================================
 
 void processGPS() {
@@ -283,55 +293,117 @@ void processGPS() {
     char incoming = Serial1.read();
     gps.encode(incoming);
   }
-
-  // If 0 bytes received after 6 seconds, try alternate baud rates (9600 -> 38400 -> 115200)
-  if (gps.charsProcessed() == 0 && (millis() - lastBaudCheck > 6000)) {
-    lastBaudCheck = millis();
-    currentBaudIdx = (currentBaudIdx + 1) % 3;
-    Serial1.end();
-    Serial1.begin(baudRates[currentBaudIdx]);
-    Serial.print("[GPS] Auto-baud trying: ");
-    Serial.print(baudRates[currentBaudIdx]);
-    Serial.println(" baud on Serial1 (Pins 0/1)");
-  }
 }
 
 // =====================================================
-// BUILD TELEMETRY PAYLOAD FOR LINUX / WEB
+// PRINT IMU INFORMATION
 // =====================================================
 
-void updateTelemetryPacket() {
-  // Format: $TEL,imu_ok,lat,lng,sats,speed_kmh,alt_m,ax,ay,az,gx,gy,gz,pitch,roll,fall,gps_bytes
-  String tel = "$TEL,";
-  tel += (imuReady ? "1" : "0");
-  tel += ",";
+void printIMU() {
+  Serial.println("\n========== IMU DATA ==========");
 
-  if (gps.location.isValid()) {
-    tel += String(gps.location.lat(), 6) + "," + String(gps.location.lng(), 6);
-  } else {
-    tel += "0.0,0.0";
+  if (!imuReady) {
+    Serial.println("IMU STATUS: NOT INITIALIZED");
+    return;
   }
 
-  tel += ",";
-  tel += String(gps.satellites.isValid() ? gps.satellites.value() : 0);
-  tel += ",";
-  tel += String(gps.speed.isValid() ? gps.speed.kmph() : 0.0, 1);
-  tel += ",";
-  tel += String(gps.altitude.isValid() ? gps.altitude.meters() : 0.0, 1);
-  tel += ",";
-  tel += String(ax, 3) + "," + String(ay, 3) + "," + String(az, 3);
-  tel += ",";
-  tel += String(gx, 2) + "," + String(gy, 2) + "," + String(gz, 2);
-  tel += ",";
-  tel += String(pitch, 1) + "," + String(roll, 1);
-  tel += ",";
-  tel += (fallAlert ? "1" : "0");
-  tel += ",";
-  tel += String(gps.charsProcessed());
+  if (!readIMU()) {
+    Serial.println("IMU STATUS: READ ERROR");
+    return;
+  }
 
-  currentTelemetry = tel;
+  unsigned long now = millis();
+  float dt = 0;
 
-  Bridge.notify("on_telemetry", currentTelemetry);
+  if (lastIMUUpdate != 0) {
+    dt = (now - lastIMUUpdate) / 1000.0;
+  }
+  lastIMUUpdate = now;
+
+  if (dt > 0 && dt < 0.2) {
+    calculateOrientation(dt);
+  }
+
+  Serial.println("IMU STATUS: WORKING");
+  Serial.println("\nACCELEROMETER (g)");
+  Serial.print("X: "); Serial.println(ax, 4);
+  Serial.print("Y: "); Serial.println(ay, 4);
+  Serial.print("Z: "); Serial.println(az, 4);
+
+  Serial.println("\nGYROSCOPE (deg/s)");
+  Serial.print("X: "); Serial.println(gx, 4);
+  Serial.print("Y: "); Serial.println(gy, 4);
+  Serial.print("Z: "); Serial.println(gz, 4);
+
+  Serial.println("\nORIENTATION");
+  Serial.print("ROLL: "); Serial.print(roll, 2); Serial.println(" degrees");
+  Serial.print("PITCH: "); Serial.print(pitch, 2); Serial.println(" degrees");
+
+  float temperature = readIMUTemperature();
+  if (!isnan(temperature)) {
+    Serial.print("TEMPERATURE: "); Serial.print(temperature, 2); Serial.println(" C");
+  }
+
+  Serial.println("==============================");
+}
+
+// =====================================================
+// PRINT GPS INFORMATION
+// =====================================================
+
+void printGPS() {
+  Serial.println("\n========== NEO-6M GPS ==========");
+
+  Serial.print("GPS BYTES: "); Serial.println(gps.charsProcessed());
+  Serial.print("VALID NMEA: "); Serial.println(gps.passedChecksum());
+  Serial.print("FAILED NMEA: "); Serial.println(gps.failedChecksum());
+
+  Serial.print("SATELLITES: ");
+  if (gps.satellites.isValid()) {
+    Serial.println(gps.satellites.value());
+  } else {
+    Serial.println("NOT AVAILABLE");
+  }
+
+  Serial.print("GPS FIX: ");
+  if (gps.location.isValid()) {
+    Serial.println("AVAILABLE");
+    Serial.print("LATITUDE: "); Serial.println(gps.location.lat(), 6);
+    Serial.print("LONGITUDE: "); Serial.println(gps.location.lng(), 6);
+    Serial.print("LOCATION AGE: "); Serial.print(gps.location.age()); Serial.println(" ms");
+  } else {
+    Serial.println("NOT AVAILABLE");
+  }
+
+  if (gps.altitude.isValid()) {
+    Serial.print("ALTITUDE: "); Serial.print(gps.altitude.meters(), 2); Serial.println(" m");
+  }
+  if (gps.speed.isValid()) {
+    Serial.print("SPEED: "); Serial.print(gps.speed.kmph(), 2); Serial.println(" km/h");
+  }
+  if (gps.hdop.isValid()) {
+    Serial.print("HDOP: "); Serial.println(gps.hdop.hdop(), 2);
+  }
+  if (gps.course.isValid()) {
+    Serial.print("COURSE: "); Serial.print(gps.course.deg(), 2); Serial.println(" degrees");
+  }
+
+  if (gps.date.isValid() && gps.time.isValid()) {
+    Serial.print("GPS DATE: ");
+    Serial.print(gps.date.day()); Serial.print("/");
+    Serial.print(gps.date.month()); Serial.print("/");
+    Serial.println(gps.date.year());
+
+    Serial.print("GPS UTC TIME: ");
+    if (gps.time.hour() < 10) Serial.print("0");
+    Serial.print(gps.time.hour()); Serial.print(":");
+    if (gps.time.minute() < 10) Serial.print("0");
+    Serial.print(gps.time.minute()); Serial.print(":");
+    if (gps.time.second() < 10) Serial.print("0");
+    Serial.println(gps.time.second());
+  }
+
+  Serial.println("===============================");
 }
 
 // =====================================================
@@ -339,35 +411,40 @@ void updateTelemetryPacket() {
 // =====================================================
 
 void setup() {
-  Serial.begin(SERIAL_BAUD);
-
-  // 1. Initialize Bridge immediately
+  // Bridge initialization for communication with Linux MPU
   Bridge.begin();
-  Bridge.provide_safe("get_telemetry", get_telemetry);
   Bridge.provide("get_telemetry", get_telemetry);
 
-  Serial.println("\n################################");
+  Serial.begin(SERIAL_BAUD);
+  delay(2000);
+
+  Serial.println("\n");
+  Serial.println("################################");
   Serial.println(" GPS + IMU MONITORING SYSTEM");
   Serial.println("       ARDUINO UNO Q");
   Serial.println("################################");
 
-  // 2. Initialize I2C
+  // Initialize I2C
   Wire.begin();
   Wire.setClock(100000);
+  Serial.println("\nI2C INITIALIZED");
 
-  // 3. Initialize GPS UART on Pins 0 (RX) and 1 (TX) at 9600
-  Serial1.begin(baudRates[currentBaudIdx]);
+  // Initialize GPS UART on Hardware Serial1 (Pins 0/1)
+  Serial1.begin(GPS_BAUD);
+  Serial.println("GPS UART INITIALIZED");
 
-  // 4. Initialize IMU
+  // Initialize IMU
   imuReady = initializeIMU();
+
   if (imuReady) {
     calibrateGyroscope();
   }
 
+  Serial.println("\nSYSTEM INITIALIZATION COMPLETE");
+  Serial.println("GPS AND IMU MONITOR STARTED");
+
   lastIMUUpdate = millis();
   lastPrint = millis();
-  lastBridgeSync = millis();
-  lastBaudCheck = millis();
 }
 
 // =====================================================
@@ -375,32 +452,19 @@ void setup() {
 // =====================================================
 
 void loop() {
-  // 1. Process GPS Characters continuously
+  // Continuously process GPS data
   processGPS();
 
-  // 2. High-Frequency IMU & Bridge Sync (10Hz)
-  if (millis() - lastBridgeSync >= BRIDGE_INTERVAL) {
-    lastBridgeSync = millis();
+  // Print both sensors every second and update bridge
+  if (millis() - lastPrint >= PRINT_INTERVAL) {
+    lastPrint = millis();
 
-    // Auto-retry IMU initialization if disconnected
-    if (!imuReady) {
-      imuReady = initializeIMU();
-      if (imuReady) {
-        calibrateGyroscope();
-      }
-    }
+    printIMU();
+    printGPS();
 
-    if (imuReady) {
-      if (readIMU()) {
-        unsigned long now = millis();
-        float dt = (lastIMUUpdate != 0) ? (now - lastIMUUpdate) / 1000.0 : 0.0;
-        lastIMUUpdate = now;
-        if (dt > 0 && dt < 0.2) {
-          calculateOrientation(dt);
-        }
-      }
-    }
+    Serial.println("\n################################");
 
-    updateTelemetryPacket();
+    // Push latest telemetry to Linux bridge
+    Bridge.notify("on_telemetry", get_telemetry());
   }
 }
