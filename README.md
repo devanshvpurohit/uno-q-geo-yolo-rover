@@ -52,10 +52,10 @@ Connect to the rover from any browser (on your phone, tablet, or PC) over Wi-Fi,
 ### 1. GPS Module (NEO-6M / M8N) $\to$ Arduino UNO Q
 | GPS Pin | Arduino UNO Q Pin | Description |
 |---|---|---|
-| `VCC` | `5V` | Power supply |
+| `VCC` | `5V` (or `3.3V`) | Power supply |
 | `GND` | `GND` | Common Ground |
-| `TX` | `Pin D4` | GPS serial transmit $\to$ MCU software RX |
-| `RX` | `Pin D3` | GPS serial receive $\to$ MCU software TX |
+| `TX` | `Pin 0 (RX)` | GPS serial transmit $\to$ MCU Hardware `Serial1` RX |
+| `RX` | `Pin 1 (TX)` | GPS serial receive $\to$ MCU Hardware `Serial1` TX |
 
 ### 2. IMU Module (MPU-6050) $\to$ Arduino UNO Q
 | MPU-6050 Pin | Arduino UNO Q Pin | Description |

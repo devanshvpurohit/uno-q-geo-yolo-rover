@@ -2,14 +2,12 @@
 #include <Wire.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
-#include <SoftwareSerial.h>
 #include <TinyGPSPlus.h>
 
-// GPS Configuration (NEO-6M / NEO-M8N)
-// Connect GPS TX -> Arduino Pin 4 (RX), GPS RX -> Arduino Pin 3 (TX)
-static const int GPS_RX_PIN = 4;
-static const int GPS_TX_PIN = 3;
-SoftwareSerial gpsSerial(GPS_RX_PIN, GPS_TX_PIN);
+// GPS Configuration on Hardware UART (Serial1)
+// On Arduino UNO Q:
+// GPS Module TX -> Arduino Pin 0 (RX)
+// GPS Module RX -> Arduino Pin 1 (TX)
 TinyGPSPlus gps;
 
 // IMU Configuration (MPU-6050 via I2C / Qwiic)
@@ -91,8 +89,8 @@ void setup() {
   pinMode(ENB, OUTPUT);
   stopMotors();
 
-  // Initialize GPS SoftwareSerial
-  gpsSerial.begin(9600);
+  // Initialize Hardware UART Serial1 for GPS (Pins D0/D1)
+  Serial1.begin(9600);
 
   // Initialize I2C IMU
   Wire.begin();
@@ -110,9 +108,9 @@ void setup() {
 }
 
 void loop() {
-  // 1. Ingest GPS data from module
-  while (gpsSerial.available() > 0) {
-    gps.encode(gpsSerial.read());
+  // 1. Ingest GPS data from hardware UART Serial1
+  while (Serial1.available() > 0) {
+    gps.encode(Serial1.read());
   }
 
   // 2. Periodically update telemetry cache
