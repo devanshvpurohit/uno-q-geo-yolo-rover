@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Automated Setup for Arduino UNO Q (4GB) Debian Linux environment
-# Handles Debian 13 PEP 668 externally-managed-environment automatically
+# Handles Debian 13 PEP 668 and configures Python 3.13 / ARM64 environment
 
 set -e
 
@@ -26,33 +26,29 @@ sudo apt-get install -y \
     git \
     curl
 
-echo "[3/4] Configuring Python environment for Debian 13..."
-# Create a virtual environment that shares system site-packages (OpenCV/Serial/Flask)
+echo "[3/4] Configuring Python environment for Debian 13 (ARM64)..."
 if [ ! -d ".venv" ]; then
     echo "Creating virtual environment (.venv) with system-site-packages..."
     python3 -m venv --system-site-packages .venv
 fi
 
-# Upgrade pip inside venv and install YOLO requirements
-echo "Installing pip requirements in .venv..."
-.venv/bin/pip install --upgrade pip
+echo "Upgrading pip & setuptools..."
+.venv/bin/pip install --upgrade pip setuptools wheel
+
+# Install PyTorch CPU wheels for ARM64 if needed
+echo "Installing PyTorch & Torchvision for ARM64..."
+.venv/bin/pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu || .venv/bin/pip install torch torchvision || true
+
+echo "Installing Ultralytics & Arduino Router Bridge in .venv..."
 .venv/bin/pip install -r python/requirements.txt
 
-# Also attempt system-wide pip install with --break-system-packages for direct terminal usage
-pip3 install --break-system-packages -r python/requirements.txt 2>/dev/null || true
-
-PYTHON_BIN="$SCRIPT_DIR/.venv/bin/python3"
-if [ ! -f "$PYTHON_BIN" ]; then
-    PYTHON_BIN="python3"
-fi
+# Ensure permissions
+chmod +x setup.sh run.sh flash_mcu.sh
 
 echo "[4/4] Pre-caching YOLOv8 Nano weights..."
 if [ ! -f "yolov8n.pt" ]; then
-    $PYTHON_BIN -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
+    .venv/bin/python3 -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" || echo "Weights will be downloaded on first launch."
 fi
-
-# Ensure all scripts are executable
-chmod +x setup.sh run.sh flash_mcu.sh
 
 # Optional: setup systemd auto-start
 if [ "$1" == "--enable-autostart" ]; then

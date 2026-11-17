@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Standalone Autonomous Geo-Aware YOLO Vision Rover for Arduino UNO Q (4GB)
-Communicates with the STM32 MCU via the native Arduino Router Bridge (RPC),
-completely removing dependency on legacy hardware serial ports:
+Communicates with the STM32 MCU via the native Arduino Router Bridge (RPC):
  - Native Bridge RPC calls: drive_motor() and get_telemetry()
  - Embedded Flask web server (Camera stream + Telemetry HUD + Manual/Auto Controls)
  - Live YOLOv8 inference directly on Qualcomm MPU (Debian 13)
@@ -15,12 +14,23 @@ import os
 import sys
 import time
 import threading
+import numpy as np
 from datetime import datetime
 from flask import Flask, render_template, Response, jsonify, request, send_file
-from ultralytics import YOLO
 
 # Initialize Flask app
 app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), 'templates'))
+
+# Gracefully import YOLO
+HAS_YOLO = False
+try:
+    from ultralytics import YOLO
+    HAS_YOLO = True
+    print("[UNO Q] Ultralytics YOLO module loaded successfully.")
+except ImportError as e:
+    print(f"[UNO Q] Warning: 'ultralytics' module not found ({e}).")
+    print("[UNO Q] Notice: Please ensure you run via './run.sh' after executing './setup.sh'.")
+    print("[UNO Q] Operating in Telemetry & Manual Navigation mode.")
 
 # Connect to the Arduino Router Bridge
 bridge = None
@@ -54,6 +64,7 @@ telemetry = {
     "last_target": "None",
     "current_action": "S",
     "mode": "auto",  # 'auto' or 'manual'
+    "yolo_status": "Active" if HAS_YOLO else "Module Missing (Run ./setup.sh)",
     "events": []
 }
 telemetry_lock = threading.Lock()
@@ -98,8 +109,7 @@ def send_command(cmd):
     if HAS_BRIDGE and bridge:
         try:
             bridge.call("drive_motor", cmd)
-        except Exception as e:
-            # Non-blocking RPC error logging
+        except Exception:
             pass
 
 def telemetry_poller():
@@ -164,9 +174,13 @@ def generate_video_stream():
     while True:
         with frame_lock:
             if current_frame is None:
-                time.sleep(0.03)
-                continue
-            ret, buffer = cv2.imencode('.jpg', current_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                # Generate placeholder frame if camera not ready
+                placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.putText(placeholder, "Connecting to camera feed...", (120, 240),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 240, 255), 2)
+                ret, buffer = cv2.imencode('.jpg', placeholder)
+            else:
+                ret, buffer = cv2.imencode('.jpg', current_frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
             frame_bytes = buffer.tobytes()
 
         yield (b'--frame\r\n'
@@ -180,8 +194,14 @@ def video_feed():
 # Vision Inference Engine
 def vision_worker():
     global current_frame
-    print("[UNO Q] Initializing YOLOv8n model...")
-    model = YOLO("yolov8n.pt")
+    model = None
+    if HAS_YOLO:
+        print("[UNO Q] Initializing YOLOv8n model...")
+        try:
+            model = YOLO("yolov8n.pt")
+        except Exception as e:
+            print(f"[UNO Q] Error initializing YOLO model: {e}")
+            model = None
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -197,11 +217,8 @@ def vision_worker():
         while True:
             ret, frame = cap.read()
             if not ret:
-                time.sleep(0.03)
+                time.sleep(0.04)
                 continue
-
-            results = model(frame, verbose=False, conf=0.45)
-            boxes = results[0].boxes
 
             frame_w = frame.shape[1]
             mid_left = frame_w * 0.35
@@ -211,40 +228,46 @@ def vision_worker():
             obstacle_present = False
             detected_label = "None"
 
-            for box in boxes:
-                cls_id = int(box.cls[0])
-                cls_name = model.names[cls_id]
-                conf = float(box.conf[0])
-                x1, y1, x2, y2 = box.xyxy[0].tolist()
+            if model is not None:
+                results = model(frame, verbose=False, conf=0.45)
+                boxes = results[0].boxes
 
-                # Draw UI overlays on stream
-                cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 240, 255), 2)
-                cv2.putText(frame, f"{cls_name} {conf:.2f}", (int(x1), int(y1) - 6),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 240, 255), 1)
+                for box in boxes:
+                    cls_id = int(box.cls[0])
+                    cls_name = model.names[cls_id]
+                    conf = float(box.conf[0])
+                    x1, y1, x2, y2 = box.xyxy[0].tolist()
 
-                cx = (x1 + x2) / 2
-                area = (x2 - x1) * (y2 - y1)
-                total_area = frame.shape[0] * frame.shape[1]
-                detected_label = f"{cls_name} ({conf:.2f})"
+                    cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 240, 255), 2)
+                    cv2.putText(frame, f"{cls_name} {conf:.2f}", (int(x1), int(y1) - 6),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 240, 255), 1)
 
-                if area > (total_area * 0.12):
-                    obstacle_present = True
-                    if cx < mid_left:
-                        action = 'R'
-                    elif cx > mid_right:
-                        action = 'L'
-                    else:
-                        action = 'S'
+                    cx = (x1 + x2) / 2
+                    area = (x2 - x1) * (y2 - y1)
+                    total_area = frame.shape[0] * frame.shape[1]
+                    detected_label = f"{cls_name} ({conf:.2f})"
 
-                    if time.time() - last_logged_time > 1.2:
-                        last_logged_time = time.time()
-                        log_event(cls_name, conf, action)
+                    if area > (total_area * 0.12):
+                        obstacle_present = True
+                        if cx < mid_left:
+                            action = 'R'
+                        elif cx > mid_right:
+                            action = 'L'
+                        else:
+                            action = 'S'
+
+                        if time.time() - last_logged_time > 1.2:
+                            last_logged_time = time.time()
+                            log_event(cls_name, conf, action)
+            else:
+                cv2.putText(frame, "TELEMETRY MODE (YOLO INACTIVE)", (20, 40),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
 
             with telemetry_lock:
                 telemetry["last_target"] = detected_label
                 mode = telemetry["mode"]
 
-            if mode == "auto":
+            if mode == "auto" and model is not None:
                 if not obstacle_present:
                     action = 'F'
                 send_command(action)

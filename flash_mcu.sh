@@ -11,23 +11,25 @@ echo "=== Flashing STM32 MCU on Arduino UNO Q ==="
 # Check if arduino-cli is installed
 if ! command -v arduino-cli &> /dev/null; then
     echo "Installing arduino-cli..."
-    curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=/usr/local/bin sh
+    curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=/usr/local/bin sudo sh
 fi
 
 # Update core index
 arduino-cli core update-index
 
-# Compile and upload
-echo "Compiling sketch..."
-arduino-cli compile --fqbn arduino:zephyr:unoq_mcu "$SKETCH_PATH"
-
-echo "Uploading to STM32 core..."
-# Detect serial port for MCU flashing
-PORT=$(arduino-cli board list | grep -i "unoq" | awk '{print $1}' || true)
-if [ -z "$PORT" ]; then
-    PORT="/dev/ttyACM0"
+# Install arduino:zephyr core if not installed
+echo "Verifying arduino:zephyr core..."
+if ! arduino-cli core list | grep -q "arduino:zephyr"; then
+    echo "Installing arduino:zephyr core..."
+    arduino-cli core install arduino:zephyr
 fi
 
-arduino-cli upload -p "$PORT" --fqbn arduino:zephyr:unoq_mcu "$SKETCH_PATH"
+# Compile using the official FQBN for UNO Q: arduino:zephyr:unoq
+echo "Compiling sketch for Arduino UNO Q (arduino:zephyr:unoq)..."
+arduino-cli compile -b arduino:zephyr:unoq "$SKETCH_PATH"
+
+# Upload to STM32 core via internal remoteocd bus
+echo "Uploading to STM32 core..."
+arduino-cli upload -b arduino:zephyr:unoq "$SKETCH_PATH"
 
 echo "=== MCU Flashed Successfully! ==="
