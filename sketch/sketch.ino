@@ -7,7 +7,7 @@
 // DEVICE CONFIGURATION
 // =====================================================
 
-#define IMU_ADDR        0x68
+uint8_t imuAddress = 0x68; // Auto-scanned: 0x68 or 0x69
 
 #define REG_WHO_AM_I    0x75
 #define REG_PWR_MGMT_1  0x6B
@@ -18,7 +18,6 @@
 #define REG_ACCEL_XOUT  0x3B
 #define REG_GYRO_XOUT   0x43
 
-#define GPS_BAUD        9600
 #define SERIAL_BAUD     115200
 
 TinyGPSPlus gps;
@@ -29,6 +28,7 @@ TinyGPSPlus gps;
 
 bool imuReady = false;
 bool fallAlert = false;
+int i2cDevicesFound = 0;
 
 int32_t gyroOffsetX = 0;
 int32_t gyroOffsetY = 0;
@@ -48,13 +48,18 @@ const float GYRO_SCALE  = 131.0;   // +/- 250 deg/s
 unsigned long lastIMUUpdate = 0;
 unsigned long lastPrint = 0;
 unsigned long lastBridgeSync = 0;
+unsigned long lastBaudCheck = 0;
+
+// GPS Baud cycling: 9600 -> 38400 -> 115200
+const uint32_t baudRates[] = {9600, 38400, 115200};
+uint8_t currentBaudIdx = 0;
 
 const unsigned long PRINT_INTERVAL = 1000;
 const unsigned long BRIDGE_INTERVAL = 100; // 10Hz sync with Linux MPU
 
 String currentTelemetry = "$TEL,0,0.0,0.0,0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0";
 
-// RPC methods exposed to Linux MPU
+// RPC method exposed to Linux MPU
 String get_telemetry() {
   return currentTelemetry;
 }
@@ -64,21 +69,26 @@ String get_telemetry() {
 // =====================================================
 
 bool writeRegister(byte reg, byte value) {
-  Wire.beginTransmission(IMU_ADDR);
+  Wire.beginTransmission(imuAddress);
   Wire.write(reg);
   Wire.write(value);
   return Wire.endTransmission() == 0;
 }
 
 bool readRegisters(byte reg, byte *buffer, byte length) {
-  Wire.beginTransmission(IMU_ADDR);
+  Wire.beginTransmission(imuAddress);
   Wire.write(reg);
 
+  // Try repeated start, then standard stop if needed
   if (Wire.endTransmission(false) != 0) {
-    return false;
+    Wire.beginTransmission(imuAddress);
+    Wire.write(reg);
+    if (Wire.endTransmission(true) != 0) {
+      return false;
+    }
   }
 
-  byte received = Wire.requestFrom((uint8_t)IMU_ADDR, length);
+  byte received = Wire.requestFrom((uint8_t)imuAddress, length);
   if (received != length) {
     while (Wire.available()) {
       Wire.read();
@@ -97,32 +107,54 @@ int16_t combineBytes(byte highByte, byte lowByte) {
 }
 
 // =====================================================
-// IMU INITIALIZATION
+// I2C SCANNER & IMU INITIALIZATION
 // =====================================================
 
-bool initializeIMU() {
-  byte id = 0;
-  Serial.println("\nINITIALIZING IMU...");
+bool scanAndDetectIMU() {
+  Serial.println("\n[I2C] Scanning bus for devices...");
+  i2cDevicesFound = 0;
+  uint8_t detected = 0;
 
-  if (!readRegisters(REG_WHO_AM_I, &id, 1)) {
-    Serial.println("IMU: WHO_AM_I READ FAILED (Check SDA/SCL wiring)");
+  for (uint8_t addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      i2cDevicesFound++;
+      Serial.print("[I2C] Found device at 0x");
+      Serial.println(addr, HEX);
+      if (addr == 0x68 || addr == 0x69) {
+        detected = addr;
+      }
+    }
+  }
+
+  if (detected != 0) {
+    imuAddress = detected;
+    Serial.print("[I2C] MPU-6050 selected at address 0x");
+    Serial.println(imuAddress, HEX);
+    return true;
+  }
+
+  Serial.println("[I2C] No MPU6050 found! If using A4/A5, try dedicated SDA/SCL pins near AREF.");
+  return false;
+}
+
+bool initializeIMU() {
+  if (!scanAndDetectIMU()) {
     return false;
   }
 
-  Serial.print("IMU WHO_AM_I: 0x");
-  Serial.println(id, HEX);
-
-  if (id == 0x68) {
-    Serial.println("DEVICE IDENTIFIED: MPU6050");
-  } else if (id == 0x70) {
-    Serial.println("DEVICE IDENTIFIED: MPU6500");
-  } else {
-    Serial.println("UNKNOWN IMU DEVICE ID, attempting config anyway...");
+  byte id = 0;
+  if (!readRegisters(REG_WHO_AM_I, &id, 1)) {
+    Serial.println("[IMU] WHO_AM_I read failed.");
+    return false;
   }
+
+  Serial.print("[IMU] WHO_AM_I ID: 0x");
+  Serial.println(id, HEX);
 
   // Wake up IMU
   if (!writeRegister(REG_PWR_MGMT_1, 0x00)) {
-    Serial.println("IMU WAKEUP FAILED");
+    Serial.println("[IMU] Wakeup failed.");
     return false;
   }
   delay(50);
@@ -137,7 +169,7 @@ bool initializeIMU() {
   writeRegister(REG_ACCEL_CONFIG, 0x00);
   delay(50);
 
-  Serial.println("IMU INITIALIZATION SUCCESS");
+  Serial.println("[IMU] Initialization SUCCESS!");
   return true;
 }
 
@@ -148,10 +180,10 @@ bool initializeIMU() {
 void calibrateGyroscope() {
   Serial.println("\n================================");
   Serial.println("GYROSCOPE CALIBRATION");
-  Serial.println("KEEP THE SENSOR COMPLETELY STILL");
+  Serial.println("KEEP THE SENSOR STILL...");
   Serial.println("================================");
 
-  const int samples = 400;
+  const int samples = 300;
   int64_t sumX = 0, sumY = 0, sumZ = 0;
   int successfulSamples = 0;
   byte data[6];
@@ -170,7 +202,7 @@ void calibrateGyroscope() {
     delay(2);
   }
 
-  if (successfulSamples < 300) {
+  if (successfulSamples < 200) {
     Serial.println("GYROSCOPE CALIBRATION FAILED");
     imuReady = false;
     return;
@@ -181,9 +213,6 @@ void calibrateGyroscope() {
   gyroOffsetZ = sumZ / successfulSamples;
 
   Serial.println("CALIBRATION COMPLETE");
-  Serial.print("OFFSETS: X="); Serial.print(gyroOffsetX);
-  Serial.print(" Y="); Serial.print(gyroOffsetY);
-  Serial.print(" Z="); Serial.println(gyroOffsetZ);
 }
 
 // =====================================================
@@ -226,19 +255,6 @@ bool readIMU() {
 }
 
 // =====================================================
-// TEMPERATURE
-// =====================================================
-
-float readIMUTemperature() {
-  byte data[2];
-  if (!readRegisters(0x41, data, 2)) {
-    return NAN;
-  }
-  int16_t rawTemp = combineBytes(data[0], data[1]);
-  return (rawTemp / 340.0) + 36.53;
-}
-
-// =====================================================
 // ROLL AND PITCH CALCULATION
 // =====================================================
 
@@ -259,7 +275,7 @@ void calculateOrientation(float dt) {
 }
 
 // =====================================================
-// GPS PROCESSING
+// GPS PROCESSING & AUTO-BAUD DETECT
 // =====================================================
 
 void processGPS() {
@@ -267,82 +283,17 @@ void processGPS() {
     char incoming = Serial1.read();
     gps.encode(incoming);
   }
-}
 
-// =====================================================
-// PRINT FUNCTIONS (SERIAL MONITOR DEBUG)
-// =====================================================
-
-void printIMU() {
-  Serial.println("\n========== IMU DATA ==========");
-  if (!imuReady) {
-    Serial.println("IMU STATUS: NOT INITIALIZED");
-    return;
+  // If 0 bytes received after 6 seconds, try alternate baud rates (9600 -> 38400 -> 115200)
+  if (gps.charsProcessed() == 0 && (millis() - lastBaudCheck > 6000)) {
+    lastBaudCheck = millis();
+    currentBaudIdx = (currentBaudIdx + 1) % 3;
+    Serial1.end();
+    Serial1.begin(baudRates[currentBaudIdx]);
+    Serial.print("[GPS] Auto-baud trying: ");
+    Serial.print(baudRates[currentBaudIdx]);
+    Serial.println(" baud on Serial1 (Pins 0/1)");
   }
-  if (!readIMU()) {
-    Serial.println("IMU STATUS: READ ERROR");
-    return;
-  }
-
-  unsigned long now = millis();
-  float dt = 0;
-  if (lastIMUUpdate != 0) {
-    dt = (now - lastIMUUpdate) / 1000.0;
-  }
-  lastIMUUpdate = now;
-
-  if (dt > 0 && dt < 0.2) {
-    calculateOrientation(dt);
-  }
-
-  Serial.println("IMU STATUS: WORKING");
-  Serial.print("ACCEL (g): X="); Serial.print(ax, 3);
-  Serial.print(" Y="); Serial.print(ay, 3);
-  Serial.print(" Z="); Serial.println(az, 3);
-
-  Serial.print("GYRO (deg/s): X="); Serial.print(gx, 2);
-  Serial.print(" Y="); Serial.print(gy, 2);
-  Serial.print(" Z="); Serial.println(gz, 2);
-
-  Serial.print("ORIENTATION: ROLL="); Serial.print(roll, 2);
-  Serial.print(" deg, PITCH="); Serial.print(pitch, 2); Serial.println(" deg");
-
-  float temp = readIMUTemperature();
-  if (!isnan(temp)) {
-    Serial.print("TEMPERATURE: "); Serial.print(temp, 1); Serial.println(" C");
-  }
-  Serial.println("==============================");
-}
-
-void printGPS() {
-  Serial.println("\n========== NEO-6M GPS ==========");
-  Serial.print("GPS BYTES PROCESSED: "); Serial.println(gps.charsProcessed());
-  Serial.print("VALID NMEA: "); Serial.println(gps.passedChecksum());
-  Serial.print("FAILED NMEA: "); Serial.println(gps.failedChecksum());
-
-  Serial.print("SATELLITES: ");
-  if (gps.satellites.isValid()) {
-    Serial.println(gps.satellites.value());
-  } else {
-    Serial.println("SEARCHING...");
-  }
-
-  Serial.print("GPS FIX: ");
-  if (gps.location.isValid()) {
-    Serial.println("AVAILABLE");
-    Serial.print("LAT: "); Serial.println(gps.location.lat(), 6);
-    Serial.print("LNG: "); Serial.println(gps.location.lng(), 6);
-  } else {
-    Serial.println("NOT AVAILABLE (Move outdoors or near window)");
-  }
-
-  if (gps.speed.isValid()) {
-    Serial.print("SPEED: "); Serial.print(gps.speed.kmph(), 1); Serial.println(" km/h");
-  }
-  if (gps.altitude.isValid()) {
-    Serial.print("ALTITUDE: "); Serial.print(gps.altitude.meters(), 1); Serial.println(" m");
-  }
-  Serial.println("===============================");
 }
 
 // =====================================================
@@ -380,7 +331,6 @@ void updateTelemetryPacket() {
 
   currentTelemetry = tel;
 
-  // Publish notification to Linux Router Bridge
   Bridge.notify("on_telemetry", currentTelemetry);
 }
 
@@ -391,7 +341,7 @@ void updateTelemetryPacket() {
 void setup() {
   Serial.begin(SERIAL_BAUD);
 
-  // 1. Initialize Bridge immediately so Linux MPU can connect without delay!
+  // 1. Initialize Bridge immediately
   Bridge.begin();
   Bridge.provide_safe("get_telemetry", get_telemetry);
   Bridge.provide("get_telemetry", get_telemetry);
@@ -404,11 +354,9 @@ void setup() {
   // 2. Initialize I2C
   Wire.begin();
   Wire.setClock(100000);
-  Serial.println("I2C INITIALIZED");
 
-  // 3. Initialize GPS UART on Pins 0 (RX) and 1 (TX)
-  Serial1.begin(GPS_BAUD);
-  Serial.println("GPS UART INITIALIZED ON SERIAL1 (PINS 0/1)");
+  // 3. Initialize GPS UART on Pins 0 (RX) and 1 (TX) at 9600
+  Serial1.begin(baudRates[currentBaudIdx]);
 
   // 4. Initialize IMU
   imuReady = initializeIMU();
@@ -416,12 +364,10 @@ void setup() {
     calibrateGyroscope();
   }
 
-  Serial.println("\nSYSTEM INITIALIZATION COMPLETE");
-  Serial.println("GPS AND IMU MONITOR STARTED");
-
   lastIMUUpdate = millis();
   lastPrint = millis();
   lastBridgeSync = millis();
+  lastBaudCheck = millis();
 }
 
 // =====================================================
@@ -436,8 +382,12 @@ void loop() {
   if (millis() - lastBridgeSync >= BRIDGE_INTERVAL) {
     lastBridgeSync = millis();
 
+    // Auto-retry IMU initialization if disconnected
     if (!imuReady) {
       imuReady = initializeIMU();
+      if (imuReady) {
+        calibrateGyroscope();
+      }
     }
 
     if (imuReady) {
@@ -452,13 +402,5 @@ void loop() {
     }
 
     updateTelemetryPacket();
-  }
-
-  // 3. Serial Monitor Diagnostic Printout every 1 second
-  if (millis() - lastPrint >= PRINT_INTERVAL) {
-    lastPrint = millis();
-    printIMU();
-    printGPS();
-    Serial.println("\n################################");
   }
 }
