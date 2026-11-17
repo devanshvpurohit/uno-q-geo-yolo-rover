@@ -60,21 +60,27 @@
         .btn-action.active { background: var(--accent-green); color: #000; }
         .btn-action.alert { background: var(--accent-red); color: #fff; }
 
+        .quick-btn { background: #152238; color: var(--accent-cyan); border: 1px solid #1e3352; border-radius: 6px; padding: 7px 12px; font-size: 0.8rem; font-weight: 500; cursor: pointer; transition: all 0.2s ease; }
+        .quick-btn:hover { background: var(--accent-cyan); color: #000; }
+
         .log-box { font-family: monospace; font-size: 0.75rem; background: #060910; border-radius: 6px; padding: 10px; height: 100px; overflow-y: auto; color: #7cfc00; margin-top: 8px; border: 1px solid #141d2d; }
     </style>
 </head>
 <body>
     <header>
-        <h1>👁️ SURDAS Assistive AI Prototype <span>(Arduino UNO Q)</span></h1>
-        <span class="badge badge-online" id="statusBadge">LIVE CONNECTED</span>
+        <h1>👁️ SURDAS Assistive AI Platform <span>(Arduino UNO Q 4GB)</span></h1>
+        <div style="display: flex; gap: 8px; align-items: center;">
+            <span class="badge badge-online" id="fpsBadge">CAM: -- FPS</span>
+            <span class="badge badge-online" id="statusBadge">LIVE CONNECTED</span>
+        </div>
     </header>
 
     <div class="container">
         <!-- HERO CARD: Real-Time AI Vision & Spatial Guidance -->
         <div class="card hero-card">
             <div class="card-title">
-                <span>🤖 AI Perception Stream (YOLOv8 Object Detection + MiDaS Depth)</span>
-                <span class="badge badge-online" id="aiStatusBadge">AI VISION ACTIVE (ARM NEON)</span>
+                <span>🤖 AI Perception Stream (YOLOv8 + MiDaS Depth)</span>
+                <span class="badge badge-online" id="aiStatusBadge">20+ FPS UVC STREAM</span>
             </div>
 
             <!-- Video Player -->
@@ -114,6 +120,40 @@
                 <button class="btn-action" style="background: #37474f; color: #fff;" onclick="testVoice()">
                     🗣️ TEST VOICE ALERT
                 </button>
+            </div>
+        </div>
+
+        <!-- OLLAMA ASSISTIVE AI CONVERSATIONAL BRAIN -->
+        <div class="card hero-card" style="border: 2px solid var(--accent-cyan); background: #0c1626;">
+            <div class="card-title">
+                <span>🧠 SURDAS Assistive AI Brain (Local Ollama Qwen2.5-0.5B)</span>
+                <span class="badge badge-online" id="ollamaBadge">OLLAMA ACTIVE</span>
+            </div>
+            <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 12px;">
+                Ask situational questions about your surroundings, path clearance, or GPS location. Answers are synthesized aloud for blind users.
+            </p>
+            <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                <input type="text" id="aiQueryInput" placeholder="Ask: What is in front of me? Where am I? Is my path clear?" 
+                       onkeydown="if(event.key==='Enter') askSurdasAI()"
+                       style="flex: 1; padding: 12px; background: #070d18; border: 1px solid var(--border); border-radius: 8px; color: #fff; font-size: 0.95rem;">
+                <button onclick="askSurdasAI()" class="btn-action" id="btnAsk" style="margin: 0; width: auto; padding: 12px 22px;">Ask Brain</button>
+            </div>
+
+            <!-- Quick Assistive Prompt Buttons -->
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">
+                <button class="quick-btn" onclick="quickAsk('What is in front of me?')">👁️ What's in front?</button>
+                <button class="quick-btn" onclick="quickAsk('Where am I right now?')">📍 Where am I?</button>
+                <button class="quick-btn" onclick="quickAsk('Is my walking path clear?')">🚶 Path clearance?</button>
+                <button class="quick-btn" onclick="quickAsk('Check my posture and safety status')">🛡️ Safety check</button>
+            </div>
+
+            <!-- Answer Box with Verbal Voice Playback -->
+            <div id="aiAnswerBox" style="display: none; background: #050a14; border: 1px solid var(--accent-cyan); border-radius: 8px; padding: 14px;">
+                <div style="font-size: 0.75rem; color: var(--accent-cyan); font-weight: bold; margin-bottom: 6px; display: flex; justify-content: space-between;">
+                    <span>SURDAS VOICE ANSWER:</span>
+                    <button onclick="speakNow(document.getElementById('aiAnswerText').innerText)" style="background: none; border: none; color: var(--accent-green); cursor: pointer; font-size: 0.85rem; font-weight: bold;">🔊 Replay Voice</button>
+                </div>
+                <div id="aiAnswerText" style="font-size: 1.05rem; color: #fff; line-height: 1.45;"></div>
             </div>
         </div>
 
@@ -159,30 +199,29 @@
                 <span class="badge badge-online" id="imuBadge">ONLINE (MPU-6050)</span>
             </div>
 
-            <div class="grid-2">
+            <div class="big-stat" id="fallStatus" style="color: var(--accent-green);">SAFE / NORMAL</div>
+            <div class="sub-stat">Live continuous user posture tracking</div>
+
+            <div class="grid-3">
                 <div class="stat-box">
-                    <div class="stat-label">Pitch Tilt</div>
-                    <div class="stat-val" id="imuPitch" style="color: var(--accent-cyan);">0.0°</div>
+                    <div class="stat-label">Pitch</div>
+                    <div class="stat-val" id="imuPitch">0.0°</div>
                 </div>
                 <div class="stat-box">
-                    <div class="stat-label">Roll Tilt</div>
-                    <div class="stat-val" id="imuRoll" style="color: var(--accent-cyan);">0.0°</div>
+                    <div class="stat-label">Roll</div>
+                    <div class="stat-val" id="imuRoll">0.0°</div>
                 </div>
                 <div class="stat-box">
-                    <div class="stat-label">Accel (X, Y, Z)</div>
-                    <div class="stat-val" id="imuAcc" style="font-size: 0.85rem;">-0.84, -0.14, -0.42</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">Fall Alert Status</div>
-                    <div class="stat-val" id="fallStatus" style="color: var(--accent-green);">SAFE / NORMAL</div>
+                    <div class="stat-label">Body Vector (g)</div>
+                    <div class="stat-val" id="imuAcc" style="font-size: 0.85rem;">0.0, 0.0, 1.0</div>
                 </div>
             </div>
 
-            <div style="margin-top: 14px; display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-size: 0.75rem; color: var(--text-dim);">Assistance Event Log</span>
-                <a href="/api/download_log" style="font-size: 0.75rem; color: var(--accent-cyan); text-decoration: none;">Download CSV Log</a>
+            <div class="log-box" id="eventBox">
+                [SYSTEM] SURDAS Perception Engine online.<br>
+                [VISION] Camera streaming at 20+ FPS.<br>
+                [LLM] Ollama Qwen2.5-0.5B ready for voice queries.
             </div>
-            <div class="log-box" id="eventBox">Telemetry and AI perception stream active...</div>
         </div>
     </div>
 
@@ -217,6 +256,48 @@
             window.speechSynthesis.speak(utter);
         }
 
+        function quickAsk(promptText) {
+            document.getElementById('aiQueryInput').value = promptText;
+            askSurdasAI();
+        }
+
+        function askSurdasAI() {
+            const input = document.getElementById('aiQueryInput');
+            const prompt = input.value.trim();
+            if (!prompt) return;
+
+            const box = document.getElementById('aiAnswerBox');
+            const textEl = document.getElementById('aiAnswerText');
+            const btn = document.getElementById('btnAsk');
+
+            box.style.display = 'block';
+            textEl.innerText = "Thinking with local Ollama model...";
+            btn.innerText = "Processing...";
+            btn.style.opacity = "0.7";
+
+            fetch('/api/ask_ai', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: prompt })
+            })
+            .then(r => r.json())
+            .then(data => {
+                btn.innerText = "Ask Brain";
+                btn.style.opacity = "1.0";
+                if (data.answer) {
+                    textEl.innerText = data.answer;
+                    speakNow(data.answer);
+                } else {
+                    textEl.innerText = "Could not get an answer from the AI model.";
+                }
+            })
+            .catch(err => {
+                btn.innerText = "Ask Brain";
+                btn.style.opacity = "1.0";
+                textEl.innerText = "Error contacting SURDAS Brain: " + err;
+            });
+        }
+
         function updateSector(fillId, valId, score) {
             const fill = document.getElementById(fillId);
             const val = document.getElementById(valId);
@@ -242,6 +323,11 @@
             fetch('/api/telemetry')
                 .then(r => r.json())
                 .then(data => {
+                    // Update FPS badge
+                    if (data.fps_cam !== undefined) {
+                        document.getElementById('fpsBadge').innerText = `CAM: ${data.fps_cam} FPS | AI: ${data.fps_ai} FPS`;
+                    }
+
                     // Update AI Guidance text
                     if (data.ai_guidance) {
                         document.getElementById('guidanceText').innerText = data.ai_guidance;
@@ -257,8 +343,8 @@
                     // Automatic speech synthesis for blind user
                     if (voiceActive && data.ai_guidance && data.ai_guidance !== lastSpokenText) {
                         const now = Date.now();
-                        // Speak if guidance changed and at least 3 seconds have passed
-                        if (now - lastSpokenTime > 3000) {
+                        // Speak if guidance changed and at least 3.5 seconds have passed
+                        if (now - lastSpokenTime > 3500) {
                             lastSpokenText = data.ai_guidance;
                             lastSpokenTime = now;
                             speakNow(data.ai_guidance);

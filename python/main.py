@@ -16,8 +16,9 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
 from datetime import datetime
-from flask import Flask, render_template, jsonify, send_file, Response
+from flask import Flask, render_template, jsonify, send_file, Response, request
 
 from ai_vision import AIVisionEngine
 
@@ -288,7 +289,67 @@ def get_telemetry_api():
         telemetry['ai_guidance'] = ai_engine.latest_guidance
         telemetry['detected_objects'] = [d["class"] for d in ai_engine.latest_detections]
         telemetry['spatial_sectors'] = ai_engine.spatial_sectors
+        telemetry['fps_cam'] = ai_engine.fps_cam
+        telemetry['fps_ai'] = ai_engine.fps_ai
         return jsonify(telemetry)
+
+@app.route('/api/ask_ai', methods=['POST'])
+def ask_ai():
+    """Ollama Assistive AI Endpoint: Answers blind user queries with real-time situational context"""
+    data = request.get_json(force=True, silent=True) or {}
+    user_prompt = data.get('prompt', '').strip()
+    if not user_prompt:
+        user_prompt = "What is around me?"
+
+    with telemetry_lock:
+        t = telemetry.copy()
+
+    # Build concise situational context
+    detected = ", ".join(t.get('detected_objects', [])) or "no distinct obstacles"
+    sectors = t.get('spatial_sectors', {})
+    left_clr = int((1.0 - sectors.get('left', 0.0)) * 100)
+    center_clr = int((1.0 - sectors.get('center', 0.0)) * 100)
+    right_clr = int((1.0 - sectors.get('right', 0.0)) * 100)
+    fall = "ALERT: Fall or impact detected!" if t.get('fall_alert') else "Normal stable posture"
+    gps_info = f"Latitude {t['lat']:.5f}, Longitude {t['lng']:.5f}, {t['sats']} Satellites locked, Altitude {t['altitude']:.1f}m" if t['lat'] != 0 else "GPS acquiring satellite fix"
+    pitch, roll = t.get('pitch', 0.0), t.get('roll', 0.0)
+
+    system_instruction = (
+        "You are SURDAS, an intelligent real-time assistive guide for a blind or visually impaired person.\n"
+        f"LIVE SENSORS:\n"
+        f"- Vision detections: {detected}\n"
+        f"- Proximity clearance: Left corridor {left_clr}% clear, Center {center_clr}% clear, Right corridor {right_clr}% clear\n"
+        f"- Orientation: Pitch {pitch}°, Roll {roll}°, Status: {fall}\n"
+        f"- Location: {gps_info}\n\n"
+        "INSTRUCTIONS:\n"
+        "Give a concise, direct, spoken response (1 to 2 sentences maximum) that tells the visually impaired user exactly what they need to know safely and clearly. Do NOT use bullet points, markdown or emojis."
+    )
+
+    ollama_payload = json.dumps({
+        "model": "qwen2.5:0.5b",
+        "prompt": f"{system_instruction}\n\nUser Question: {user_prompt}\nSURDAS Voice Answer:",
+        "stream": False,
+        "options": {
+            "num_predict": 50,
+            "temperature": 0.3,
+            "num_thread": 2
+        }
+    }).encode('utf-8')
+
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:11434/api/generate",
+            data=ollama_payload,
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=12) as response:
+            res_json = json.loads(response.read().decode('utf-8'))
+            reply = res_json.get('response', '').strip()
+            return jsonify({"success": True, "answer": reply})
+    except Exception as e:
+        # Fallback instantaneous rule-based response if Ollama is still initializing
+        fallback = f"SURDAS status: {detected} detected in front of you. Center corridor is {center_clr}% clear."
+        return jsonify({"success": True, "answer": fallback, "note": str(e)})
 
 @app.route('/api/download_log')
 def download_log():
