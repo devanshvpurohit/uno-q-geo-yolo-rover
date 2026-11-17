@@ -17,25 +17,29 @@ app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), 't
 BridgeObj = None
 HAS_BRIDGE = False
 
-# Try importing the official Arduino UNO Q Bridge
-try:
-    from arduino.router_bridge import Bridge
-    b_inst = Bridge()
-    if hasattr(b_inst, 'connect'):
-        b_inst.connect(timeout=5)
-    BridgeObj = b_inst
-    HAS_BRIDGE = True
-    print("[SURDAS] Successfully connected via 'arduino.router_bridge.Bridge'!")
-except Exception as e1:
+def connect_bridge(timeout=3):
+    global BridgeObj, HAS_BRIDGE
     try:
-        from arduino.app_utils import Bridge
-        BridgeObj = Bridge
+        from arduino.router_bridge import Bridge
+        b = Bridge()
+        b.connect(timeout=timeout)
+        BridgeObj = b
         HAS_BRIDGE = True
-        print("[SURDAS] Successfully connected via 'arduino.app_utils.Bridge'!")
-    except Exception as e2:
-        print(f"[SURDAS] Notice: Could not connect to Arduino Router ({e1} / {e2}).")
-        print("[SURDAS] Run: .venv/bin/pip install arduino-router-bridge")
-        HAS_BRIDGE = False
+        print("[SURDAS] Connected to Arduino Router Bridge!")
+        return b
+    except Exception as e:
+        try:
+            from arduino.app_utils import Bridge
+            BridgeObj = Bridge
+            HAS_BRIDGE = True
+            print("[SURDAS] Connected using arduino.app_utils.Bridge!")
+            return Bridge
+        except Exception as e2:
+            HAS_BRIDGE = False
+            return None
+
+# Initial connection attempt
+connect_bridge(timeout=2)
 
 # Shared Telemetry State
 telemetry = {
@@ -114,32 +118,37 @@ if HAS_BRIDGE and BridgeObj:
         if hasattr(BridgeObj, 'provide'):
             BridgeObj.provide("on_telemetry", on_telemetry)
     except Exception as e:
-        print(f"[SURDAS] Note on Bridge.provide: {e}")
+        pass
 
-# Active Telemetry Polling Thread
+# Active Telemetry Polling Thread with Auto-Reconnect
 def telemetry_worker():
     last_print = 0
-    consecutive_errors = 0
+    consecutive_fails = 0
 
     while True:
-        if HAS_BRIDGE and BridgeObj:
-            try:
-                # Call MCU RPC function
-                raw = BridgeObj.call("get_telemetry")
-                if raw is not None:
-                    parsed = parse_telemetry_packet(str(raw))
-                    if parsed:
-                        consecutive_errors = 0
-                else:
-                    # Try secondary function name
-                    raw_sec = BridgeObj.call("get_telemetry_raw")
-                    if raw_sec is not None:
-                        parse_telemetry_packet(str(raw_sec))
+        b = BridgeObj
+        if b is None or consecutive_fails > 5:
+            b = connect_bridge(timeout=1)
+            consecutive_fails = 0
 
+        if b is not None:
+            try:
+                # Query MCU for telemetry
+                raw = b.call("get_telemetry")
+                if raw is not None:
+                    parse_telemetry_packet(str(raw))
+                    consecutive_fails = 0
+                else:
+                    consecutive_fails += 1
             except Exception as e:
-                consecutive_errors += 1
-                if consecutive_errors == 1 or consecutive_errors % 20 == 0:
-                    print(f"[SURDAS] Bridge RPC query note: {e}")
+                consecutive_fails += 1
+                # Try reconnecting if disconnected
+                if "Not connected" in str(e) or "send failed" in str(e):
+                    try:
+                        if hasattr(b, 'connect'):
+                            b.connect(timeout=2)
+                    except Exception:
+                        pass
 
         # Print console status every second
         if time.time() - last_print >= 1.0:
@@ -147,9 +156,9 @@ def telemetry_worker():
             with telemetry_lock:
                 t = telemetry.copy()
 
-            gps_desc = f"{t['lat']:.5f}, {t['lng']:.5f} ({t['sats']} Sats)" if (t['lat'] != 0.0) else f"Searching ({t['sats']} Sats, {t['gps_bytes']} raw bytes)"
-            print(f"[SURDAS] Bridge: {'CONNECTED' if t['bridge_connected'] else 'WAITING'} | "
-                  f"IMU: {'OK' if t['imu_ok'] else 'DISCONNECTED'} (P:{t['pitch']}°, R:{t['roll']}°) | "
+            gps_desc = f"{t['lat']:.5f}, {t['lng']:.5f} ({t['sats']} Sats)" if (t['lat'] != 0.0) else f"Searching ({t['sats']} Sats, {t['gps_bytes']} bytes rx)"
+            print(f"[SURDAS] Bridge: {'CONNECTED' if t['bridge_connected'] else 'CONNECTING...'} | "
+                  f"IMU: {'OK' if t['imu_ok'] else 'OFF'} (P:{t['pitch']}°, R:{t['roll']}°) | "
                   f"GPS: {gps_desc}")
 
         time.sleep(0.15)

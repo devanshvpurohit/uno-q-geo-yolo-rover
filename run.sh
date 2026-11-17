@@ -7,6 +7,14 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Ensure arduino-router daemon is running
+if command -v systemctl &>/dev/null; then
+    if ! systemctl is-active --quiet arduino-router 2>/dev/null; then
+        echo "Starting arduino-router system service..."
+        sudo systemctl restart arduino-router 2>/dev/null || true
+    fi
+fi
+
 # Ensure .venv exists
 if [ ! -d "$SCRIPT_DIR/.venv" ]; then
     echo "Creating virtual environment (.venv)..."

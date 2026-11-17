@@ -54,7 +54,7 @@ const unsigned long BRIDGE_INTERVAL = 100; // 10Hz sync with Linux MPU
 
 String currentTelemetry = "$TEL,0,0.0,0.0,0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0";
 
-// RPC method exposed to Linux MPU
+// RPC methods exposed to Linux MPU
 String get_telemetry() {
   return currentTelemetry;
 }
@@ -125,7 +125,7 @@ bool initializeIMU() {
     Serial.println("IMU WAKEUP FAILED");
     return false;
   }
-  delay(100);
+  delay(50);
 
   // Sample rate = 100 Hz
   writeRegister(REG_SMPLRT_DIV, 0x09);
@@ -135,7 +135,7 @@ bool initializeIMU() {
   writeRegister(REG_GYRO_CONFIG, 0x00);
   // Accelerometer range = +/- 2g
   writeRegister(REG_ACCEL_CONFIG, 0x00);
-  delay(100);
+  delay(50);
 
   Serial.println("IMU INITIALIZATION SUCCESS");
   return true;
@@ -151,7 +151,7 @@ void calibrateGyroscope() {
   Serial.println("KEEP THE SENSOR COMPLETELY STILL");
   Serial.println("================================");
 
-  const int samples = 500;
+  const int samples = 400;
   int64_t sumX = 0, sumY = 0, sumZ = 0;
   int successfulSamples = 0;
   byte data[6];
@@ -167,10 +167,10 @@ void calibrateGyroscope() {
       sumZ += rawZ;
       successfulSamples++;
     }
-    delay(3);
+    delay(2);
   }
 
-  if (successfulSamples < 400) {
+  if (successfulSamples < 300) {
     Serial.println("GYROSCOPE CALIBRATION FAILED");
     imuReady = false;
     return;
@@ -390,32 +390,31 @@ void updateTelemetryPacket() {
 
 void setup() {
   Serial.begin(SERIAL_BAUD);
-  delay(1500);
+
+  // 1. Initialize Bridge immediately so Linux MPU can connect without delay!
+  Bridge.begin();
+  Bridge.provide_safe("get_telemetry", get_telemetry);
+  Bridge.provide("get_telemetry", get_telemetry);
 
   Serial.println("\n################################");
   Serial.println(" GPS + IMU MONITORING SYSTEM");
   Serial.println("       ARDUINO UNO Q");
   Serial.println("################################");
 
-  // Initialize I2C
+  // 2. Initialize I2C
   Wire.begin();
   Wire.setClock(100000);
-  Serial.println("\nI2C INITIALIZED");
+  Serial.println("I2C INITIALIZED");
 
-  // Initialize GPS UART on Pins 0 (RX) and 1 (TX)
+  // 3. Initialize GPS UART on Pins 0 (RX) and 1 (TX)
   Serial1.begin(GPS_BAUD);
   Serial.println("GPS UART INITIALIZED ON SERIAL1 (PINS 0/1)");
 
-  // Initialize IMU
+  // 4. Initialize IMU
   imuReady = initializeIMU();
   if (imuReady) {
     calibrateGyroscope();
   }
-
-  // Initialize Bridge to Linux MPU
-  Bridge.begin();
-  Bridge.provide_safe("get_telemetry", get_telemetry);
-  Bridge.provide("get_telemetry_raw", get_telemetry);
 
   Serial.println("\nSYSTEM INITIALIZATION COMPLETE");
   Serial.println("GPS AND IMU MONITOR STARTED");
